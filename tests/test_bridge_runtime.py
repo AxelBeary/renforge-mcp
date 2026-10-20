@@ -4175,10 +4175,9 @@ def test_scene_overflow_does_not_treat_float_maximum_as_pixels(running_bridge):
     overflow_fn = running_bridge.globs["_renforge_scene_overflow"]
 
     partial = overflow_fn(_FakeTextDisplayable(300, 40, xmaximum=0.5, ymaximum=40))
-    assert partial["available"] is True
-    assert partial["overflow_axes"] == {"x": None, "y": 0}
-    assert partial["overflow"] is False
-    assert partial["wrapped"] == {"x": False, "y": False}
+    assert partial["available"] is False
+    assert partial["reason"] == "no absolute x maximum; wrapped height unknown"
+    assert partial["natural"] == {"width": 300, "height": 40}
     assert partial["constraints"] == {
         "host_xmaximum": 0.5,
         "subject_xmaximum": 0.5,
@@ -4209,6 +4208,29 @@ def test_scene_overflow_does_not_treat_float_maximum_as_pixels(running_bridge):
     assert relative_host["constraints"]["host_xmaximum"] == 0.5
     assert relative_host["constraints"]["effective_xmaximum"] == 200
     assert relative_host["constraints"]["maximum_source"] == {"x": "subject", "y": None}
+
+
+def test_scene_overflow_x_only_marks_y_unmeasured(running_bridge):
+    overflow = running_bridge.globs["_renforge_scene_overflow"](
+        _FakeTextDisplayable(300, 40, xmaximum=200)
+    )
+
+    assert overflow["available"] is True
+    assert overflow["complete"] is False
+    assert overflow["unmeasured_axes"] == ["y"]
+    assert overflow["overflow_axes"] == {"x": 100, "y": None}
+    assert overflow["overflow"] is True
+
+
+def test_scene_overflow_y_only_is_not_a_verdict(running_bridge):
+    overflow = running_bridge.globs["_renforge_scene_overflow"](
+        _FakeTextDisplayable(300, 40, ymaximum=20)
+    )
+
+    assert overflow["available"] is False
+    assert overflow["reason"] == "no absolute x maximum; wrapped height unknown"
+    assert overflow["overflow"] is None
+    assert overflow["overflow_px"] is None
 
 
 def test_scene_overflow_reads_button_child_text(running_bridge):

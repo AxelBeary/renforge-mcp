@@ -2606,6 +2606,7 @@ init python:
     # Only these node types can wrap a text displayable worth measuring.
     _RENFORGE_SCENE_OVERFLOW_TYPES = ("text", "button", "input")
     _RENFORGE_SCENE_OVERFLOW_SEARCH_DEPTH = 4
+    _RENFORGE_SCENE_OVERFLOW_SEARCH_LIMIT = 16
     _RENFORGE_SCENE_OVERFLOW_BASIS = (
         "unwrapped text width and rendered wrapped height vs effective pixel maximum"
     )
@@ -2781,7 +2782,10 @@ init python:
             children = None
         if children:
             try:
-                candidates.extend(list(children))
+                for index, child in enumerate(children):
+                    if index >= _RENFORGE_SCENE_OVERFLOW_SEARCH_LIMIT:
+                        break
+                    candidates.append(child)
             except Exception:
                 pass
         else:
@@ -2932,19 +2936,23 @@ init python:
             return _renforge_scene_overflow_unavailable(
                 "no absolute maximum declared", natural, constraints
             )
-        rendered = natural
-        if effective["x"] is not None:
-            rendered, error = _renforge_scene_text_size(subject, effective["x"], 1000000)
-            if rendered is None:
-                return _renforge_scene_overflow_unavailable(error, natural, constraints)
-        axes = {"x": None, "y": None}
-        if effective["x"] is not None:
-            axes["x"] = max(0, natural["width"] - effective["x"])
+        if effective["x"] is None:
+            # Without an absolute width the real wrap width is unknown; the
+            # unwrapped height cannot prove that the text fits vertically.
+            return _renforge_scene_overflow_unavailable(
+                "no absolute x maximum; wrapped height unknown", natural, constraints
+            )
+        rendered, error = _renforge_scene_text_size(subject, effective["x"], 1000000)
+        if rendered is None:
+            return _renforge_scene_overflow_unavailable(error, natural, constraints)
+        axes = {"x": max(0, natural["width"] - effective["x"]), "y": None}
         if effective["y"] is not None:
             axes["y"] = max(0, rendered["height"] - effective["y"])
         measured = [value for value in axes.values() if value is not None]
         return {
             "available": True,
+            "complete": effective["y"] is not None,
+            "unmeasured_axes": [] if effective["y"] is not None else ["y"],
             "overflow": any(value > 0 for value in measured),
             "overflow_axes": axes,
             "overflow_px": max(measured) if measured else 0,

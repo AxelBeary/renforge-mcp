@@ -879,8 +879,10 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "overflow verdict: the effective ceiling is the tighter of the widget's absolute `xmaximum`/`ymaximum` "
             "(minus integer padding and margins) and the child text's own absolute maximum; the unwrapped text size is "
             "compared with that inner box, text that must wrap counts as x overflow, and the wrapped height is compared "
-            "with the inner height for y clipping. Relative maximums are recorded but not compared, and vertical text is not "
-            "measured. When no absolute maximum is declared the verdict is `available: false` with a reason."
+            "with the inner height for y clipping. A y verdict requires an absolute x maximum to know the wrap width; "
+            "a y-only request is unavailable. An x-only result is `complete: false` with `unmeasured_axes: [\"y\"]`. "
+            "Relative maximums are recorded but not compared, and vertical text is not measured. When no absolute "
+            "maximum is declared the verdict is `available: false` with a reason."
         ),
         annotations=_ann(
             readOnlyHint=False,

@@ -339,8 +339,11 @@ Notes:
   beyond that box counts as x overflow (the text must wrap), and the height of
   the text rendered at that width is compared with the inner height for y. Float
   (relative) maximums are reported but not compared, and vertical text is not
-  measured because `Text.size` does not rotate it. Unavailable verdicts keep
-  `overflow` and `overflow_px` as `null` and add a reason.
+  measured because `Text.size` does not rotate it. A y verdict requires an
+  absolute x maximum to know the wrap width; a y-only request is unavailable.
+  An x-only result is `complete: false` with `unmeasured_axes: ["y"]`.
+  Unavailable verdicts keep `overflow` and `overflow_px` as `null` and add a
+  reason.
 - When a focusable scan hits `max_nodes`, `covered` and `clickable` are `null` with
   `coverage_reason="max_nodes"` because omitted higher controls may overlap them.
 - MCP replies default to `max_items=50`, `max_output_depth=6`, and
