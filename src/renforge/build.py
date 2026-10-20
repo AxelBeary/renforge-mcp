@@ -30,7 +30,11 @@ def _launcher_command(sdk: RenpySdk, command: str, *args: str) -> list[str]:
 
 
 def _destination_receipt(project: RenpyProject, destination: str | Path | None) -> list[str] | None:
-    """Return the destination as a write receipt when it is explicitly known."""
+    """Return the destination as a write receipt when it is explicitly known.
+
+    Ren'Py chooses a default destination when none is given, so an unknown
+    destination cannot be enumerated and yields no receipt at all.
+    """
     if destination is None:
         return None
     path = Path(destination).expanduser().resolve()
@@ -39,6 +43,15 @@ def _destination_receipt(project: RenpyProject, destination: str | Path | None) 
     except ValueError:
         # Builds may be written outside the project; keep the absolute path.
         return [path.as_posix()]
+
+
+def _build_receipt(
+    project: RenpyProject, destination: str | Path | None, ok: bool
+) -> list[str] | None:
+    """Only a successful build with an explicit destination has a receipt."""
+    if not ok:
+        return None
+    return _destination_receipt(project, destination)
 
 
 def web_build(sdk: RenpySdk, project: RenpyProject, *, destination: str | Path | None = None, timeout: int = 600) -> dict[str, Any]:
@@ -54,12 +67,10 @@ def web_build(sdk: RenpySdk, project: RenpyProject, *, destination: str | Path |
         "stdout": result.stdout[-4000:],
         "stderr": result.stderr[-4000:],
         "timed_out": result.timed_out,
-        "files_touched": (
-            _destination_receipt(project, destination) or []
-            if result.returncode == 0
-            else []
-        ),
     }
+    receipt = _build_receipt(project, destination, result.returncode == 0)
+    if receipt is not None:
+        payload["files_touched"] = receipt
     return payload
 
 
@@ -91,12 +102,10 @@ def distribute(
         "stdout": result.stdout[-4000:],
         "stderr": result.stderr[-4000:],
         "timed_out": result.timed_out,
-        "files_touched": (
-            _destination_receipt(project, destination) or []
-            if result.returncode == 0
-            else []
-        ),
     }
+    receipt = _build_receipt(project, destination, result.returncode == 0)
+    if receipt is not None:
+        payload["files_touched"] = receipt
     return payload
 
 

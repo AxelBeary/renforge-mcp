@@ -360,6 +360,32 @@ def test_bridge_session_close_kills_running_game(tmp_path: Path) -> None:
     assert injected.exists()
 
 
+def test_bridge_session_close_reports_a_removed_temporary_savedir(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    savedir = tmp_path / "renforge-saves"
+    savedir.mkdir()
+    (savedir / "1-1-LT1.save").write_text("save", encoding="utf-8")
+
+    session = BridgeSession(
+        _FakeProcess(),
+        _FakeClient(),
+        project_root,
+        temporary_savedir=savedir,
+        cleanup_savedir=True,
+    )
+
+    result = session.close()
+
+    assert not savedir.exists()
+    assert result["cleaned"]["temporary_savedir"] is True
+    # The temporary savedir lives outside the project, so its receipt stays
+    # absolute.
+    assert result["files_deleted"] == [savedir.resolve().as_posix()]
+
+
 def test_failed_launch_removes_every_generated_bridge_artifact(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DISPLAY", ":0")
     project, sdk, root = _make_project(tmp_path)

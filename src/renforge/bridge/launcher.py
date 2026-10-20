@@ -476,6 +476,18 @@ def _editor_environment(
     }
 
 
+def _deletion_receipt(project_root: Path, path: Path) -> str:
+    """Render a removed path for ``files_deleted``.
+
+    Paths inside the project stay project-relative POSIX; a temporary savedir
+    usually lives outside the project and stays absolute.
+    """
+    try:
+        return path.resolve().relative_to(project_root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return path.as_posix()
+
+
 def remove_bridge_artifacts(
     project_root: Path,
     *,
@@ -642,13 +654,17 @@ class BridgeSession:
             failed.append("bridge_artifacts")
 
         if self.cleanup_savedir and self.temporary_savedir is not None:
+            savedir = self.temporary_savedir
             try:
-                shutil.rmtree(self.temporary_savedir, ignore_errors=False)
+                shutil.rmtree(savedir, ignore_errors=False)
                 cleaned["temporary_savedir"] = True
             except FileNotFoundError:
+                # Already gone: cleanup succeeded, but nothing was deleted.
                 cleaned["temporary_savedir"] = True
             except Exception:
                 failed.append("temporary_savedir")
+            else:
+                removed.append(_deletion_receipt(self._project_root, savedir))
 
         self._cleaned = cleaned
         result: dict[str, Any] = {"cleaned": cleaned, "files_deleted": removed}

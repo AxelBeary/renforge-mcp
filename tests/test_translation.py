@@ -51,7 +51,7 @@ def test_generate_translations_reports_the_tl_directory_on_success(
     assert result["files_touched"] == ["game/tl/french"]
 
 
-def test_generate_translations_failure_has_no_receipt(tmp_path: Path, monkeypatch) -> None:
+def test_generate_translations_failure_omits_the_receipt(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         translation,
         "run_command",
@@ -61,7 +61,20 @@ def test_generate_translations_failure_has_no_receipt(tmp_path: Path, monkeypatc
     result = translation.generate_translations(_FakeSdk(), _project(tmp_path), "french")
 
     assert result["ok"] is False
-    assert result["files_touched"] == []
+    assert "files_touched" not in result
+
+
+def test_export_dialogue_failure_omits_the_receipt(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        translation,
+        "run_command",
+        lambda command, timeout: SimpleNamespace(returncode=1, stdout="", stderr="boom"),
+    )
+
+    result = translation.export_dialogue(_FakeSdk(), _project(tmp_path))
+
+    assert result["ok"] is False
+    assert "files_touched" not in result
 
 
 def test_export_dialogue_reports_the_project_root_output(

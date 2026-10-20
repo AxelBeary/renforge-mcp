@@ -16,7 +16,6 @@ from .util.files import append_nofollow, ensure_private_directory, write_json_at
 _MAX_ACTIVITY_BYTES = 8192
 _MAX_STRING_CHARS = 512
 _MAX_COLLECTION_ITEMS = 32
-_MAX_FILES_TOUCHED = 32
 _SENSITIVE_TOKENS = frozenset(
     {
         "authorization",
@@ -123,12 +122,14 @@ def summarize_result(result: Any) -> dict[str, Any]:
     """
     if isinstance(result, dict):
         ok = result.get("ok", not isinstance(result.get("error"), str))
-        recorded = "files_touched" in result
+        touched = result.get("files_touched")
+        deleted = result.get("files_deleted")
         return {
             "ok": bool(ok),
-            "files_touched": _coerce_files_touched(result.get("files_touched")),
-            "files_deleted": _coerce_files_touched(result.get("files_deleted")),
-            "files_touched_recorded": recorded,
+            "files_touched": _coerce_files_touched(touched),
+            "files_deleted": _coerce_files_touched(deleted),
+            "files_touched_recorded": touched is not None,
+            "files_deleted_recorded": deleted is not None,
             "result": result,
         }
 
@@ -138,6 +139,7 @@ def summarize_result(result: Any) -> dict[str, Any]:
             "files_touched": [],
             "files_deleted": [],
             "files_touched_recorded": False,
+            "files_deleted_recorded": False,
             "result": result,
         }
 
@@ -146,6 +148,7 @@ def summarize_result(result: Any) -> dict[str, Any]:
         "files_touched": [],
         "files_deleted": [],
         "files_touched_recorded": False,
+        "files_deleted_recorded": False,
         "result": str(result),
     }
 
@@ -159,19 +162,22 @@ def _write_files_sidecar(
 ) -> str | None:
     """Spill the full path lists under ``.renforge/activity-files/`` (0600).
 
+    The sidecar is shaped ``{"files_touched": [...], "files_deleted": [...]}``.
     Returns the project-relative POSIX path, or ``None`` when the sidecar
-    cannot be written safely. The journal entry itself is still written.
+    cannot be written safely (for example an unsafe directory, wrong DACL or
+    unsupported volume). The compact journal entry is still written either way.
     """
-    payload: dict[str, Any] = {"files_touched": files_touched}
-    if files_deleted:
-        payload["files_deleted"] = files_deleted
+    payload: dict[str, Any] = {
+        "files_touched": files_touched,
+        "files_deleted": files_deleted,
+    }
     digest_source = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(digest_source).hexdigest()[:16]
     try:
         directory = ensure_private_directory(activity_dir / "activity-files")
         path = directory / f"{timestamp}-{digest}.json"
         write_json_atomic(path, payload, mode=0o600, follow_symlinks=False)
-    except (OSError, ValueError):
+    except Exception:
         return None
     try:
         return path.relative_to(project_root).as_posix()
@@ -185,21 +191,23 @@ def log_tool_call(
     params: dict[str, Any],
     duration_ms: float,
     result: Any,
-    files_touched: list[str] | None = None,
     policy: dict[str, Any] | None = None,
 ) -> None:
     summary = summarize_result(result)
-    full_touched = [
-        str(item)
-        for item in (summary["files_touched"] if files_touched is None else files_touched)
-    ]
+    full_touched = [str(item) for item in summary["files_touched"]]
     full_deleted = [str(item) for item in summary["files_deleted"]]
-    compact_touched = [_bound_text(item) for item in full_touched[:_MAX_FILES_TOUCHED]]
-    compact_deleted = [_bound_text(item) for item in full_deleted[:_MAX_FILES_TOUCHED]]
+    compact_touched = [_bound_text(item) for item in full_touched[:_MAX_COLLECTION_ITEMS]]
+    compact_deleted = [_bound_text(item) for item in full_deleted[:_MAX_COLLECTION_ITEMS]]
     # More than 32 paths cannot live in the compact UI field, so the full list
-    # has to be preserved elsewhere even when the entry itself still fits.
-    truncated = len(full_touched) > len(compact_touched) or len(full_deleted) > len(
-        compact_deleted
+    # has to be preserved elsewhere even when the entry itself still fits. A
+    # single path longer than the compact limit is clipped the same way.
+    oversized = any(
+        len(item) > _MAX_STRING_CHARS for item in full_touched + full_deleted
+    )
+    truncated = (
+        len(full_touched) > len(compact_touched)
+        or len(full_deleted) > len(compact_deleted)
+        or oversized
     )
 
     root = _coerce_project_root(project_root)
@@ -217,9 +225,9 @@ def log_tool_call(
         "files_touched": compact_touched,
         "files_touched_recorded": summary["files_touched_recorded"],
         "files_touched_truncated": truncated,
+        "files_deleted": compact_deleted,
+        "files_deleted_recorded": summary["files_deleted_recorded"],
     }
-    if compact_deleted:
-        entry["files_deleted"] = compact_deleted
     if policy:
         entry["policy"] = _coerce_payload(policy)
 
@@ -257,10 +265,9 @@ def log_tool_call(
             encoded = _encode_activity_entry(entry)
         while len(encoded) > _MAX_ACTIVITY_BYTES and entry.get("files_deleted"):
             keep = len(entry["files_deleted"]) // 2
-            if keep:
-                entry["files_deleted"] = entry["files_deleted"][:keep]
-            else:
-                entry.pop("files_deleted", None)
+            # Keep the key present even when its last item has to go; the
+            # receipt contract always includes files_deleted.
+            entry["files_deleted"] = entry["files_deleted"][:keep]
             encoded = _encode_activity_entry(entry)
 
     # Last resort: a minimal entry, but still carrying a bounded receipt and
@@ -274,6 +281,8 @@ def log_tool_call(
             "files_touched": list(entry.get("files_touched") or [])[:1],
             "files_touched_recorded": summary["files_touched_recorded"],
             "files_touched_truncated": bool(entry.get("files_touched_truncated")),
+            "files_deleted": [],
+            "files_deleted_recorded": summary["files_deleted_recorded"],
         }
         if sidecar_path is not None:
             entry["files_touched_file"] = sidecar_path

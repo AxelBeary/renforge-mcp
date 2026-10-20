@@ -70,8 +70,9 @@ def generate_translations(sdk: RenpySdk, project: RenpyProject, language: str, *
         "returncode": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,
-        "files_touched": ["game/tl/%s" % language] if ok else [],
     }
+    if ok:
+        payload["files_touched"] = ["game/tl/%s" % language]
     return payload
 
 
@@ -105,9 +106,10 @@ def export_dialogue(sdk: RenpySdk, project: RenpyProject, language: str = "None"
         "returncode": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,
-        # Ren'Py writes this file at the project root (see renforge_export_dialogue).
-        "files_touched": ["dialogue.txt"] if ok else [],
     }
+    if ok:
+        # Ren'Py writes this file at the project root (see renforge_export_dialogue).
+        payload["files_touched"] = ["dialogue.txt"]
     return payload
 
 

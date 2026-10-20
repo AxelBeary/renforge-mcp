@@ -3644,11 +3644,18 @@ def test_editor_save_receipt_reads_only_a_completed_commit() -> None:
         },
     }
 
-    assert _editor_saved_paths(raw) == ["screens.rpy"]
+    assert _editor_saved_paths(raw) == ["game/screens.rpy"]
     # The public view stays pure; the save path adds the receipt only after
     # the current request has settled.
     view = _editor_public_view(raw, action="save", frame_id="frame-1")
     assert "files_touched" not in view
 
+    already_prefixed = {
+        "last_commit_status": {
+            "state": "committed",
+            "source_relative_path": "game/screens.rpy",
+        }
+    }
+    assert _editor_saved_paths(already_prefixed) == ["game/screens.rpy"]
     assert _editor_saved_paths({"last_commit_status": {"state": "failed"}}) == []
     assert _editor_saved_paths({"last_commit_status": None}) == []

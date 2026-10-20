@@ -489,14 +489,25 @@ escape hatch above.
 
 ### Write receipts
 
-Mutating tools name what they wrote: `files_touched` lists paths, and cleanup
-tools also return `files_deleted`. Paths inside the project are relative POSIX;
-Ren'Py savedir paths stay absolute and are labeled by the explicit `savedir`
-field. Each `.renforge/activity.jsonl` entry carries `files_touched_recorded`
-(true when the result explicitly reported paths), `files_touched_truncated`
-(true when only a compact list is stored), and, when the full list was spilled,
-`files_touched_file` — a 0600 JSON sidecar under `.renforge/activity-files/`.
-Entries keep at most 32 paths in `files_touched`; on overflow, verbose params
+Mutating tools that can enumerate their outputs report a write receipt:
+`files_touched` lists the files or directories written, and cleanup tools also
+return `files_deleted`. Paths inside the project are project-relative POSIX
+(for example `game/screens.rpy`, `game/tl/french`, or `dialogue.txt`); paths
+outside the project (an external build destination or Ren'Py's savedir) stay
+absolute. A tool that cannot enumerate its outputs — `renforge_launch`, lint
+analysis, or a failed build or translation — omits the key instead of
+returning an empty list, so an empty list always means "wrote nothing".
+`renforge_saves` additionally labels the external savedir with `savedir`.
+
+Each `.renforge/activity.jsonl` entry carries `files_touched_recorded` and
+`files_deleted_recorded` (true only when the result supplied a non-null
+explicit list) plus `files_touched_truncated` (true when only a compact list is
+stored). Entries keep at most 32 paths, and a path longer than 512 characters
+counts as truncated. On truncation the full lists are spilled to
+`files_touched_file` — a 0600 JSON sidecar under `.renforge/activity-files/`
+shaped `{"files_touched": [...], "files_deleted": [...]}` with the same path
+base rules. If the sidecar cannot be written safely, the compact entry is
+still recorded and `files_touched_file` is omitted. On overflow, verbose params
 and result details are dropped first, never the write receipt.
 
 Recommended practices:

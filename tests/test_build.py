@@ -24,12 +24,12 @@ def _project(tmp_path: Path) -> RenpyProject:
     return RenpyProject(root)
 
 
-def _fake_run_command(monkeypatch) -> None:
+def _fake_run_command(monkeypatch, *, returncode: int = 0) -> None:
     monkeypatch.setattr(
         build,
         "run_command",
         lambda command, timeout: SimpleNamespace(
-            returncode=0, stdout="", stderr="", timed_out=False
+            returncode=returncode, stdout="", stderr="", timed_out=False
         ),
     )
 
@@ -71,3 +71,35 @@ def test_distribute_reports_an_external_destination_as_absolute(
 
     assert result["ok"] is True
     assert result["files_touched"] == [destination.resolve().as_posix()]
+
+
+def test_build_without_a_destination_reports_no_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _fake_run_command(monkeypatch)
+    project = _project(tmp_path)
+    sdk = _fake_sdk(tmp_path)
+
+    web = build.web_build(sdk, project)
+    desktop = build.distribute(sdk, project)
+
+    # Ren'Py picks a default destination that the tool cannot enumerate, so
+    # the receipt is omitted rather than claiming an empty write.
+    assert web["ok"] is True
+    assert "files_touched" not in web
+    assert desktop["ok"] is True
+    assert "files_touched" not in desktop
+
+
+def test_failed_build_reports_no_receipt(tmp_path: Path, monkeypatch) -> None:
+    _fake_run_command(monkeypatch, returncode=1)
+    project = _project(tmp_path)
+    sdk = _fake_sdk(tmp_path)
+
+    web = build.web_build(sdk, project, destination=project.abs_root / "builds" / "web")
+    desktop = build.distribute(sdk, project, destination=tmp_path / "dist")
+
+    assert web["ok"] is False
+    assert "files_touched" not in web
+    assert desktop["ok"] is False
+    assert "files_touched" not in desktop

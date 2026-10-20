@@ -23,6 +23,7 @@ def test_summarize_result_reads_only_explicit_write_receipts() -> None:
     assert legacy["files_touched"] == []
     assert legacy["files_deleted"] == []
     assert legacy["files_touched_recorded"] is False
+    assert legacy["files_deleted_recorded"] is False
 
     explicit = summarize_result(
         {
@@ -34,6 +35,13 @@ def test_summarize_result_reads_only_explicit_write_receipts() -> None:
     assert explicit["files_touched"] == ["game/a.rpy"]
     assert explicit["files_deleted"] == ["game/b.rpy"]
     assert explicit["files_touched_recorded"] is True
+    assert explicit["files_deleted_recorded"] is True
+
+    explicit_nulls = summarize_result({"ok": True, "files_touched": None, "files_deleted": None})
+    assert explicit_nulls["files_touched"] == []
+    assert explicit_nulls["files_deleted"] == []
+    assert explicit_nulls["files_touched_recorded"] is False
+    assert explicit_nulls["files_deleted_recorded"] is False
 
 
 def test_activity_log_does_not_treat_legacy_files_as_writes(tmp_path: Path) -> None:
@@ -49,7 +57,38 @@ def test_activity_log_does_not_treat_legacy_files_as_writes(tmp_path: Path) -> N
     assert entry["files_touched"] == []
     assert entry["files_touched_recorded"] is False
     assert entry["files_touched_truncated"] is False
+    assert entry["files_deleted"] == []
+    assert entry["files_deleted_recorded"] is False
     assert "files_touched_file" not in entry
+
+
+def test_activity_log_marks_a_null_receipt_as_not_recorded(tmp_path: Path) -> None:
+    log_tool_call(
+        tmp_path,
+        "renforge_export_dialogue",
+        {"project_path": str(tmp_path)},
+        1.0,
+        {"ok": False, "files_touched": None},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched"] == []
+    assert entry["files_touched_recorded"] is False
+    assert entry["files_touched_truncated"] is False
+
+
+def test_activity_log_always_includes_files_deleted_for_symmetry(tmp_path: Path) -> None:
+    log_tool_call(
+        tmp_path,
+        "renforge_capture_screenshot",
+        {"project_path": str(tmp_path)},
+        1.0,
+        {"ok": True, "files_touched": [".renforge/captures/frame.png"]},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_deleted"] == []
+    assert entry["files_deleted_recorded"] is False
 
 
 def test_activity_log_marks_explicit_receipts_recorded(tmp_path: Path) -> None:
@@ -70,6 +109,7 @@ def test_activity_log_marks_explicit_receipts_recorded(tmp_path: Path) -> None:
     assert entry["files_deleted"] == ["game/old.rpy"]
     assert entry["files_touched_recorded"] is True
     assert entry["files_touched_truncated"] is False
+    assert entry["files_deleted_recorded"] is True
 
 
 def test_activity_log_overflow_keeps_the_compact_receipt(tmp_path: Path) -> None:
@@ -89,7 +129,60 @@ def test_activity_log_overflow_keeps_the_compact_receipt(tmp_path: Path) -> None
     assert entry["files_touched"] == ["game/screens.rpy"]
     assert entry["files_touched_recorded"] is True
     assert entry["files_touched_truncated"] is False
+    assert entry["files_deleted"] == []
+    assert entry["files_deleted_recorded"] is False
     assert "files_touched_file" not in entry
+
+
+def test_activity_log_marks_one_oversized_path_as_truncated_and_spills_it(
+    tmp_path: Path,
+) -> None:
+    long_path = "game/" + ("d" * 595)
+    assert len(long_path) == 600
+
+    log_tool_call(
+        tmp_path,
+        "renforge_generate_translations",
+        {"project_path": str(tmp_path)},
+        1.0,
+        {"ok": True, "files_touched": [long_path]},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched_truncated"] is True
+    assert len(entry["files_touched"]) == 1
+    assert entry["files_touched"][0].startswith("game/" + ("d" * 100))
+    assert entry["files_touched"][0].endswith("...[truncated]")
+    sidecar = json.loads(
+        (tmp_path / entry["files_touched_file"]).read_text(encoding="utf-8")
+    )
+    assert sidecar["files_touched"] == [long_path]
+    assert sidecar["files_deleted"] == []
+
+
+def test_activity_log_keeps_the_journal_entry_when_the_sidecar_fails(
+    tmp_path: Path,
+) -> None:
+    renforge = tmp_path / ".renforge"
+    renforge.mkdir()
+    # A regular file where the sidecar directory belongs makes
+    # ensure_private_directory raise PrivatePathError.
+    (renforge / "activity-files").write_text("not a directory", encoding="utf-8")
+    paths = [f"game/file_{index}.rpy" for index in range(33)]
+
+    log_tool_call(
+        tmp_path,
+        "renforge_generate_translations",
+        {"project_path": str(tmp_path)},
+        1.0,
+        {"ok": True, "files_touched": paths},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched_truncated"] is True
+    assert entry["files_touched"] == paths[:32]
+    assert "files_touched_file" not in entry
+    assert (renforge / "activity-files").is_file()
 
 
 def test_activity_log_overflow_spills_full_path_list_to_private_sidecar(
@@ -134,6 +227,7 @@ def test_activity_log_spills_an_oversized_deleted_list_too(tmp_path: Path) -> No
     entry = _read_entry(tmp_path)
     assert entry["files_touched_truncated"] is True
     assert len(entry["files_deleted"]) == 32
+    assert entry["files_deleted_recorded"] is True
     sidecar = json.loads(
         (tmp_path / entry["files_touched_file"]).read_text(encoding="utf-8")
     )

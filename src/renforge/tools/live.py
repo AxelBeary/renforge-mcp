@@ -1358,14 +1358,24 @@ def _editor_public_view(
 
 
 def _editor_saved_paths(raw: dict[str, Any]) -> list[str]:
-    """Return the source path of the commit this save produced, if any."""
+    """Return the project-relative source path of the commit this save produced.
+
+    Editor transaction records store ``source_relative_path`` relative to the
+    ``game/`` directory (for example ``screens.rpy``). Every receipt is
+    project-relative, so add the ``game/`` base unless it is already present.
+    """
     commit = raw.get("last_commit_status")
     if not isinstance(commit, dict):
         return []
     if commit.get("state") not in {"published", "committed"}:
         return []
     source = commit.get("source_relative_path")
-    return [source] if isinstance(source, str) and source else []
+    if not isinstance(source, str) or not source:
+        return []
+    normalized = source.replace("\\", "/").removeprefix("./")
+    if normalized.startswith("game/"):
+        return [normalized]
+    return ["game/" + normalized]
 
 
 def _editor_read_status(client: BridgeClient) -> dict[str, Any]:
