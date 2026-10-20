@@ -522,34 +522,54 @@ controls with bounds and a `frame_id`.
 
 For scripts and CI, call tools through the FastMCP CLI instead of an
 interactive MCP client. `--command` starts the stdio server, `--target` names
-the tool, and `--json` prints the raw result:
+the tool, `--input-json` passes the arguments as a JSON object, and `--json`
+prints FastMCP's result envelope.
+
+The primary install is `uvx renforge@latest serve`, so use the same launcher as
+your client config in place of `renforge serve`. If `renforge` is not on
+`PATH`, substitute the matching launcher. The `fastmcp` CLI ships with the
+`fastmcp` package, a RenForge dependency; install it if the command is not on
+your `PATH`.
 
 ```bash
 fastmcp call --command "renforge serve" --target renforge_info --json
 ```
 
-Pass tool arguments as JSON with `--input-json`. Plain `key=value` tokens are
-not usable with `--command`: they bind to the server-spec positional and the
-call is rejected.
+`--json` prints FastMCP's envelope, not just the tool payload: `content` (the
+result blocks), `is_error`, and `structured_content`. Read the tool payload from
+`structured_content`, or from the first text block when it is absent; the
+command exits 1 when `is_error` is true.
 
 ```bash
 fastmcp call --command "renforge serve" --target renforge_inspect_project \
   --input-json '{"project_path": "/path/to/game"}' --json
 ```
 
-Use the same launcher as your client config (for example
-`uvx renforge@latest serve`) in place of `renforge serve`. The `fastmcp` CLI
-ships with the `fastmcp` package, a RenForge dependency; install it if the
-command is not on your `PATH`.
+Plain `key=value` tokens are not usable with `--command`: they bind to the
+server-spec positional and the call is rejected, so pass arguments with
+`--input-json`.
 
-The project is chosen by `renforge serve --project /path/to/game` as the
-default, or per call with `project_path` in the arguments. An MCP stdio client
-is the other supported route.
+`renforge serve --project /path/to/game` only seeds the `active_project` that
+`renforge_info` reports (a dashboard selection wins). It does not supply a
+default project for tool calls: most project tools require `project_path`, so
+pass it explicitly on every project-scoped call, as in the second example.
+
+Under `RENFORGE_POLICY=enforce`, destructive and open-world calls are denied
+unless the arguments include `"authorize": true` in `--input-json`, for example
+`--input-json '{"project_path": "/path/to/game", "authorize": true}'`. See
+[POLICY.md](POLICY.md). With `RENFORGE_POLICY=off` (the default) the flag is
+unnecessary.
+
+A long-lived MCP stdio client is the other documented route. Each
+`fastmcp call` starts a fresh server process, so in-process state — including
+launch ownership — is not shared between calls; use one stdio session for
+multi-step launches that must stay under the same server's control. The
+dashboard's `/api/*` endpoints are a UI surface, not a documented scripting API.
 
 `renforge.server.create_app()` is used by the test suite to build the server
 in-process, but it is not a declared stable public API and no module-level app
 instance is provided; scripts should use the stdio/CLI route.
 
-> **Version note:** These flags were verified against FastMCP 4.0.5, the
-> version in `uv.lock`. `pyproject.toml` only requires `fastmcp>=2.0.0`, so CLI
-> flags may differ on other releases; check `fastmcp call --help`.
+> **Version note:** These flags were checked against FastMCP 4.0.5.
+> `pyproject.toml` only requires `fastmcp>=2.0.0`, so CLI flags may differ on
+> other releases; check `fastmcp call --help`.
