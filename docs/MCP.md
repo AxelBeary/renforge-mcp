@@ -517,3 +517,39 @@ After configuration, ask the agent:
 
 A successful response contains the active project, a project summary, and
 controls with bounds and a `frame_id`.
+
+## Scripted / non-interactive use
+
+For scripts and CI, call tools through the FastMCP CLI instead of an
+interactive MCP client. `--command` starts the stdio server, `--target` names
+the tool, and `--json` prints the raw result:
+
+```bash
+fastmcp call --command "renforge serve" --target renforge_info --json
+```
+
+Pass tool arguments as JSON with `--input-json`. Plain `key=value` tokens are
+not usable with `--command`: they bind to the server-spec positional and the
+call is rejected.
+
+```bash
+fastmcp call --command "renforge serve" --target renforge_inspect_project \
+  --input-json '{"project_path": "/path/to/game"}' --json
+```
+
+Use the same launcher as your client config (for example
+`uvx renforge@latest serve`) in place of `renforge serve`. The `fastmcp` CLI
+ships with the `fastmcp` package, a RenForge dependency; install it if the
+command is not on your `PATH`.
+
+The project is chosen by `renforge serve --project /path/to/game` as the
+default, or per call with `project_path` in the arguments. An MCP stdio client
+is the other supported route.
+
+`renforge.server.create_app()` is used by the test suite to build the server
+in-process, but it is not a declared stable public API and no module-level app
+instance is provided; scripts should use the stdio/CLI route.
+
+> **Version note:** These flags were verified against FastMCP 4.0.5, the
+> version in `uv.lock`. `pyproject.toml` only requires `fastmcp>=2.0.0`, so CLI
+> flags may differ on other releases; check `fastmcp call --help`.
