@@ -875,7 +875,9 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "Read the full scene graph (logical scene data). Unlike `renforge_list_ui_elements` this is broad and includes non-"
             "focusable nodes, so use it for full-tree inspection when semantic selectors are ambiguous. `save_as` or "
             "`diff_against` may create `.renforge/scenes/`; `save_as` writes and overwrites the named JSON snapshot. Omit both "
-            "options for read-only inspection."
+            "options for read-only inspection. With `include=[\"overflow\"]` only `text`, `button`, and `input` nodes get an "
+            "overflow verdict comparing the text's natural size with the widget's absolute `xmaximum`/`ymaximum`; when no "
+            "absolute maximum is declared (or a maximum is relative), the verdict is `available: false` with a reason."
         ),
         annotations=_ann(
             readOnlyHint=False,

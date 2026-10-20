@@ -2603,6 +2603,10 @@ init python:
     _RENFORGE_SCENE_MAX_TEXT_CHARS = 4096
     _RENFORGE_SCENE_MAX_ID_CHARS = 256
     _RENFORGE_SCENE_SEMANTIC_TYPES = ("image", "text", "button", "bar", "input", "imagemap", "hotspot")
+    # Only these node types can wrap a text displayable worth measuring.
+    _RENFORGE_SCENE_OVERFLOW_TYPES = ("text", "button", "input")
+    _RENFORGE_SCENE_OVERFLOW_SEARCH_DEPTH = 4
+    _RENFORGE_SCENE_OVERFLOW_BASIS = "text natural size vs widget maximum"
     def _renforge_scene_string(value, max_chars):
         if value is None:
             return None
@@ -2748,29 +2752,129 @@ init python:
         bg = getattr(style, "background", None)
         if bg is not None:
             out["background"] = str(bg)[:60]
+        for attr_name in ("xmaximum", "ymaximum"):
+            value = getattr(style, attr_name, None)
+            if isinstance(value, int) and not isinstance(value, bool):
+                out[attr_name] = value
         return out or None
 
-    def _renforge_scene_overflow(d):
-        style = getattr(d, "style", None)
-        render_for_size = getattr(getattr(renpy.display, "render", None), "render_for_size", None)
-        if not callable(render_for_size):
-            return {"available": False, "reason": "render API unavailable"}
+    def _renforge_scene_text_subject(d, depth=0, seen=None):
+        # Buttons and inputs wrap the displayable that actually draws text.
+        # Search a few levels down, without following cycles.
+        if d is None:
+            return None
+        if seen is None:
+            seen = set()
+        if id(d) in seen:
+            return None
+        seen.add(id(d))
+        if _renforge_scene_type(d) == "text":
+            return d
+        if depth >= _RENFORGE_SCENE_OVERFLOW_SEARCH_DEPTH:
+            return None
+        candidates = []
         try:
-            surf = render_for_size(d, 1000000, 1000000, 0, 0)
-            nw = int(getattr(surf, "width", 0) or 0)
-            nh = int(getattr(surf, "height", 0) or 0)
+            children = getattr(d, "children", None)
+        except Exception:
+            children = None
+        if children:
+            try:
+                candidates.extend(list(children))
+            except Exception:
+                pass
+        else:
+            try:
+                child = getattr(d, "child", None)
+            except Exception:
+                child = None
+            if child is not None:
+                candidates.append(child)
+        get_child = getattr(d, "get_child", None)
+        if callable(get_child):
+            try:
+                child = get_child()
+            except Exception:
+                child = None
+            if child is not None:
+                candidates.append(child)
+        for child in candidates:
+            subject = _renforge_scene_text_subject(child, depth + 1, seen)
+            if subject is not None:
+                return subject
+        return None
+
+    def _renforge_scene_natural_size(subject):
+        try:
+            size_fn = getattr(subject, "size", None)
+            if callable(size_fn):
+                measured = size_fn(1000000, 1000000, 0, 0)
+            else:
+                render_for_size = getattr(getattr(renpy.display, "render", None), "render_for_size", None)
+                if not callable(render_for_size):
+                    return None, "no size or render API"
+                surf = render_for_size(subject, 1000000, 1000000, 0, 0)
+                measured = (getattr(surf, "width", None), getattr(surf, "height", None))
+            return {"width": int(measured[0]), "height": int(measured[1])}, None
         except Exception as exc:
-            return {"available": False, "reason": "render failed: %s" % exc}
-        xmax = getattr(style, "xmaximum", None) if style is not None else None
-        ymax = getattr(style, "ymaximum", None) if style is not None else None
-        ox = int(nw - xmax) if isinstance(xmax, int) and nw > xmax else 0
-        oy = int(nh - ymax) if isinstance(ymax, int) and nh > ymax else 0
+            return None, "size measurement failed: %s" % exc
+
+    def _renforge_scene_pixel_maximum(value):
+        # Ren'Py treats an int maximum as a pixel ceiling and a float maximum
+        # as a fraction of the parent's size. Only the int form is comparable.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return int(value)
+        return None
+
+    def _renforge_scene_constraint_value(value):
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        try:
+            return str(value)[:40]
+        except Exception:
+            return None
+
+    def _renforge_scene_overflow(d):
+        subject = _renforge_scene_text_subject(d)
+        if subject is None:
+            return {"available": False, "reason": "no text subject"}
+        natural, error = _renforge_scene_natural_size(subject)
+        if natural is None:
+            return {"available": False, "reason": error}
+        style = getattr(d, "style", None)
+        constraints = {}
+        ceilings = {}
+        for axis, attr_name in (("x", "xmaximum"), ("y", "ymaximum")):
+            try:
+                value = getattr(style, attr_name, None) if style is not None else None
+            except Exception:
+                value = None
+            constraints[attr_name] = _renforge_scene_constraint_value(value)
+            ceiling = _renforge_scene_pixel_maximum(value)
+            if ceiling is not None:
+                ceilings[axis] = ceiling
+        if not ceilings:
+            return {
+                "available": False,
+                "reason": "no absolute maximum declared",
+                "natural": natural,
+                "constraints": constraints,
+            }
+        axes = {}
+        for axis, natural_key in (("x", "width"), ("y", "height")):
+            ceiling = ceilings.get(axis)
+            if ceiling is None:
+                axes[axis] = None
+            else:
+                axes[axis] = max(0, natural[natural_key] - ceiling)
+        measured = [value for value in axes.values() if value is not None]
         return {
             "available": True,
-            "overflow": bool(ox or oy),
-            "overflow_px": max(ox, oy),
-            "clipped": bool(ox or oy),
-            "natural": {"width": nw, "height": nh},
+            "overflow": any(value > 0 for value in measured),
+            "overflow_axes": axes,
+            "overflow_px": max(measured) if measured else 0,
+            "natural": natural,
+            "constraints": constraints,
+            "basis": _RENFORGE_SCENE_OVERFLOW_BASIS,
         }
 
     def _renforge_scene_finalize(nodes, include):
@@ -2784,7 +2888,7 @@ init python:
                 style = _renforge_scene_style(d)
                 if style:
                     node["style"] = style
-            if want_overflow and node.get("type") == "text":
+            if want_overflow and node.get("type") in _RENFORGE_SCENE_OVERFLOW_TYPES:
                 node["overflow"] = _renforge_scene_overflow(d)
 
     def _renforge_scene_descend_children(d, base_x, base_y, layer, screen, zorder, seen, out, counters, depth):

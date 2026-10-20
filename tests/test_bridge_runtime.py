@@ -80,6 +80,25 @@ class _FakeImageButtonWidget:
         return self._child
 
 
+class _FakeTextDisplayable:
+    """Minimal Text stand-in: natural size plus style maximums."""
+
+    def __init__(self, width, height, **style):
+        self._natural = (width, height)
+        self.style = types.SimpleNamespace(**style)
+
+    def size(self, width, height, st, at):
+        return self._natural
+
+
+class _FakeTextButtonDisplayable:
+    """Minimal Window-style control that wraps a text child."""
+
+    def __init__(self, child, **style):
+        self.child = child
+        self.style = types.SimpleNamespace(**style)
+
+
 class _FakeFocus:
     def __init__(self, text, x, y, w, h, widget=None):
         if widget is not None:
@@ -4087,3 +4106,96 @@ def test_bridge_rpy_windows_read_write_adapter_and_version_enforcement(tmp_path:
         with simulate_nt():
             globs["_renforge_bridge_read_starting_info"](project_root)
     assert len(calls["close_handle"]) == 1
+
+
+def test_scene_overflow_compares_text_size_to_int_maximum(running_bridge):
+    overflow = running_bridge.globs["_renforge_scene_overflow"](
+        _FakeTextDisplayable(300, 40, xmaximum=200)
+    )
+
+    assert overflow["available"] is True
+    assert overflow["overflow"] is True
+    assert overflow["overflow_axes"] == {"x": 100, "y": None}
+    assert overflow["overflow_px"] == 100
+    assert overflow["natural"] == {"width": 300, "height": 40}
+    assert overflow["constraints"] == {"xmaximum": 200, "ymaximum": None}
+    assert overflow["basis"] == "text natural size vs widget maximum"
+
+
+def test_scene_overflow_reports_unset_maximum(running_bridge):
+    overflow = running_bridge.globs["_renforge_scene_overflow"](
+        _FakeTextDisplayable(300, 40)
+    )
+
+    assert overflow == {
+        "available": False,
+        "reason": "no absolute maximum declared",
+        "natural": {"width": 300, "height": 40},
+        "constraints": {"xmaximum": None, "ymaximum": None},
+    }
+
+
+def test_scene_overflow_does_not_treat_float_maximum_as_pixels(running_bridge):
+    overflow_fn = running_bridge.globs["_renforge_scene_overflow"]
+
+    partial = overflow_fn(_FakeTextDisplayable(300, 40, xmaximum=0.5, ymaximum=40))
+    assert partial["available"] is True
+    assert partial["overflow_axes"] == {"x": None, "y": 0}
+    assert partial["overflow"] is False
+    assert partial["constraints"] == {"xmaximum": 0.5, "ymaximum": 40}
+
+    float_only = overflow_fn(_FakeTextDisplayable(300, 40, xmaximum=0.5, ymaximum=0.5))
+    assert float_only["available"] is False
+    assert float_only["reason"] == "no absolute maximum declared"
+    assert float_only["natural"] == {"width": 300, "height": 40}
+    assert float_only["constraints"] == {"xmaximum": 0.5, "ymaximum": 0.5}
+
+
+def test_scene_overflow_reads_button_child_text(running_bridge):
+    text = _FakeTextDisplayable(280, 20)
+    button = _FakeTextButtonDisplayable(text, xmaximum=200, ymaximum=100)
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["available"] is True
+    assert overflow["overflow"] is True
+    assert overflow["overflow_axes"] == {"x": 80, "y": 0}
+    assert overflow["overflow_px"] == 80
+    assert overflow["natural"] == {"width": 280, "height": 20}
+    assert overflow["constraints"] == {"xmaximum": 200, "ymaximum": 100}
+
+
+def test_scene_finalize_attaches_overflow_to_text_button_and_input(running_bridge):
+    text = _FakeTextDisplayable(280, 20)
+    button = _FakeTextButtonDisplayable(text, xmaximum=200)
+    nodes = [
+        {"type": "text", "_d": _FakeTextDisplayable(300, 40, xmaximum=250)},
+        {"type": "button", "_d": button},
+        {"type": "input", "_d": object()},
+        {"type": "image", "_d": object()},
+    ]
+
+    running_bridge.globs["_renforge_scene_finalize"](nodes, {"overflow"})
+
+    assert nodes[0]["overflow"]["overflow_axes"] == {"x": 50, "y": None}
+    assert nodes[1]["overflow"]["available"] is True
+    assert nodes[1]["overflow"]["overflow_axes"] == {"x": 80, "y": None}
+    assert nodes[2]["overflow"] == {"available": False, "reason": "no text subject"}
+    assert "overflow" not in nodes[3]
+    assert all("_d" not in node for node in nodes)
+
+
+def test_scene_overflow_has_no_clipped_alias(running_bridge):
+    overflow = running_bridge.globs["_renforge_scene_overflow"](
+        _FakeTextDisplayable(300, 40, xmaximum=200)
+    )
+
+    assert "clipped" not in overflow
+
+
+def test_scene_style_reports_integer_maximums_only(running_bridge):
+    style = running_bridge.globs["_renforge_scene_style"](
+        _FakeTextDisplayable(300, 40, xmaximum=200, ymaximum=0.5)
+    )
+
+    assert style["xmaximum"] == 200
+    assert "ymaximum" not in style

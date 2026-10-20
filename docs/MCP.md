@@ -300,7 +300,9 @@ renforge_scene_tree(project_path)
      omitted{by_type,by_layer,by_reason}, truncated,
      limits{max_depth,max_nodes,max_text_chars}
 renforge_scene_tree(project_path, include=["color","style","overflow"])
-  -> per node: composited color.dominant, declared style, best-effort text overflow
+  -> per node: composited color.dominant, declared style (with integer
+     xmaximum/ymaximum), and on text/button/input nodes only an overflow verdict
+     (available:false + reason when no absolute maximum is declared)
 renforge_scene_tree(project_path, format="wireframe")
   -> an ASCII map plus a legend mapping labels to ids/bounds/text
 renforge_scene_tree(project_path, save_as="before")   # persist a snapshot
@@ -415,7 +417,7 @@ guards: each capture hashes a new frame.
 | `renforge_get_displayable_bounds` | Report the logical bounds and center where a shown image tag was rendered. |
 | `renforge_position_element` | Reposition a shown image tag live (`xpos`, `ypos`, anchors, align, offsets, `zoom`, `rotate`) and return its new bounds. |
 | `renforge_diff_screenshots` | Diff two frames (or a saved PNG against the live frame) and return the changed region's bounding box. |
-| `renforge_scene_tree` | Perceive the whole scene as logical-coordinate nodes — every layer displayable, focusable control, and text block — with `id`, `type`, `bounds`, `center`, `zorder`, `screen`, and an `omitted` completeness hint. Unlike `renforge_list_ui_elements` (focusables only) it also reports non-focusable text and images. `detail` is `semantic` (default), `layout`, or `raw`; `layers`/`types`/`screen`/`ids` scope it; `include=["color","style","overflow"]` adds composited colour, declared style, and best-effort text overflow; `format="wireframe"` adds an ASCII map; `save_as`/`diff_against` persist and diff snapshots under `<project>/.renforge/scenes/`. |
+| `renforge_scene_tree` | Perceive the whole scene as logical-coordinate nodes — every layer displayable, focusable control, and text block — with `id`, `type`, `bounds`, `center`, `zorder`, `screen`, and an `omitted` completeness hint. Unlike `renforge_list_ui_elements` (focusables only) it also reports non-focusable text and images. `detail` is `semantic` (default), `layout`, or `raw`; `layers`/`types`/`screen`/`ids` scope it; `include=["color","style","overflow"]` adds composited colour, declared style (including integer `xmaximum`/`ymaximum`), and a text overflow verdict on `text`/`button`/`input` nodes only (absent or relative maximums return `available: false` with a reason); `format="wireframe"` adds an ASCII map; `save_as`/`diff_against` persist and diff snapshots under `<project>/.renforge/scenes/`. |
 | `renforge_measure` | Measure pixel relationships between scene nodes (by `id`) or literal bounds without vision: `align`, `gap`, `distribute`, `center`, `overlap`, `fit`, and WCAG `contrast`. Returns logical-pixel deltas and, with `tolerance`, a `pass` verdict. |
 
 ### State and controlled execution
