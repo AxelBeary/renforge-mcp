@@ -40,7 +40,6 @@ from .paths import (
     sha256_bytes,
 )
 from .runtime import RuntimeProbe
-from .scope import require_in_scope
 from .shadow import ShadowLintResult, build_shadow_project, run_shadow_lint
 from .source import (
     BAR_SIZE_MODE_XSIZE_YSIZE,
@@ -80,6 +79,7 @@ from .source import (
     textbutton_patch_kwargs,
     uses_runtime_delta_position,
 )
+from .scope import require_in_scope
 
 
 def expected_measurement_method(statement_kind: str) -> str:
