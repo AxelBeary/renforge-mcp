@@ -554,7 +554,10 @@ def test_commit_refuses_stale_source_and_duplicate_intent_ids(tmp_path: Path) ->
         coordinator.close()
 
 
-def test_commit_shadow_isolation_and_validation_failure_diagnostics(tmp_path: Path) -> None:
+def test_commit_shadow_isolation_and_validation_failure_diagnostics(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("RENFORGE_SHADOW_STRICT_LINT", "1")
     project, source = _make_project(tmp_path)
     (project.root / ".lint_touch").write_text("1\n", encoding="utf-8")
     (project.root / ".lint_fail").write_text("1\n", encoding="utf-8")
