@@ -21,6 +21,8 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .. import session_registry
+from ..bridge.launcher import normalize_language
+from ..launch_env import LaunchError
 from ..tools import live
 from ..tools import project_ops
 from ..lint import run_lint
@@ -788,13 +790,16 @@ def create_ui_app(project_root: Path, ui_token: str, dashboard_url: str | None =
                 status_code=400,
                 details={"timeout": timeout},
             )
-        if language is not None and not isinstance(language, str):
-            return error_response(
-                code="launch_language_invalid",
-                error="language must be a string",
-                status_code=400,
-                details={"language": language},
-            )
+        if language is not None:
+            try:
+                language = normalize_language(language)
+            except LaunchError as exc:
+                return error_response(
+                    code="launch_language_invalid",
+                    error=exc.message,
+                    status_code=400,
+                    details={"language": payload.get("language")},
+                )
         result = await asyncio.to_thread(
             _start_live_launch,
             version=version,

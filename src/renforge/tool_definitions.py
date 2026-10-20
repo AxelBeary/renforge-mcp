@@ -208,9 +208,11 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "project_path": "Project root passed to the launcher and runtime bridge.",
             "warp": "Optional Ren'Py `file.rpy:line` startup target; this launch tool does not resolve label names.",
             "language": (
-                "Optional Ren'Py language code set as `RENPY_LANGUAGE` for a fresh game process. It overrides the "
-                "player's stored language preference for that session only, is intended for verification, and cannot "
-                "change an already-running session."
+                "Optional Ren'Py language code set as `RENPY_LANGUAGE` for a fresh game process. Ren'Py persists "
+                "it as `preferences.language`, so this changes the stored preference, not just one session; for "
+                "verification use `savedir='temporary'` (and `persistent='empty'`, which requires an isolated "
+                "savedir) or restore the language afterward. It cannot change an already-running session, and only "
+                "`renforge_launch` accepts it: a later jump/new-game/Warp relaunch uses the stored preference."
             ),
             "version": "Launcher version selector, either `stable` or an explicit semantic version (for example `8.5.3`).",
             "editor": "Enable/disable live editor injection; default True for interactive work.",

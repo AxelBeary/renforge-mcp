@@ -24,6 +24,74 @@ def test_inspect_screen_forwards_name_to_bridge_client(tmp_path, monkeypatch):
     assert calls == {"name": "custom"}
 
 
+def _running_session(language: str):
+    process = types.SimpleNamespace(returncode=None)
+    process.poll = lambda: process.returncode
+    session = types.SimpleNamespace(
+        editor=True,
+        closed=False,
+        process=process,
+        client=types.SimpleNamespace(
+            get_state=lambda: {"current_label": "start", "language": language}
+        ),
+    )
+
+    def close():
+        session.closed = True
+        return {"cleaned": {}, "failed": []}
+
+    session.close = close
+    return session
+
+
+def test_start_launch_keeps_the_language_warning_for_a_ready_session(tmp_path, monkeypatch):
+    (tmp_path / "game").mkdir()
+    session = _running_session("english")
+    monkeypatch.setitem(live._SESSIONS, live._key(tmp_path), session)
+
+    first = live.start_launch(
+        str(tmp_path),
+        lambda _root, _cancel: {
+            "ok": True,
+            "ready": True,
+            "already_running": True,
+            "requested_language": "english",
+            "active_language": "english",
+        },
+        language="english",
+        wait_timeout=1.0,
+    )
+    assert first["ready"] is True
+
+    note = (
+        "The requested language cannot be applied to the already-running session. "
+        "Stop it and launch again to change language."
+    )
+    second = live.start_launch(
+        str(tmp_path),
+        lambda _root, _cancel: {
+            "ok": True,
+            "ready": True,
+            "already_running": True,
+            "requested_language": "german",
+            "active_language": "english",
+            "language_applied": False,
+            "message": note,
+        },
+        language="german",
+        wait_timeout=1.0,
+    )
+
+    assert second["ready"] is True
+    assert second["already_running"] is True
+    assert second["requested_language"] == "german"
+    assert second["active_language"] == "english"
+    assert second["language_applied"] is False
+    assert second["message"] == note
+
+    session.process.returncode = 0
+
+
 def test_start_launch_echoes_requested_language(tmp_path):
     (tmp_path / "game").mkdir()
 
@@ -166,6 +234,39 @@ def test_launch_game_reports_language_cannot_change_a_running_session(tmp_path, 
     assert result["active_language"] == "english"
     assert result["language_applied"] is False
     assert "cannot be applied" in result["message"]
+
+
+def test_launch_game_reports_an_already_active_language_as_applied(tmp_path, monkeypatch):
+    (tmp_path / "game").mkdir()
+    session = _running_session("english")
+    monkeypatch.setitem(live._SESSIONS, live._key(tmp_path), session)
+
+    result = live.launch_game(str(tmp_path), language="english")
+
+    assert result["already_running"] is True
+    assert result["requested_language"] == "english"
+    assert result["active_language"] == "english"
+    assert result["language_applied"] is True
+    assert result["already_active"] is True
+    assert "message" not in result
+
+
+def test_launch_game_reports_language_on_external_session_mode_mismatch(tmp_path, monkeypatch):
+    (tmp_path / "game").mkdir()
+    monkeypatch.setattr(
+        live,
+        "_client",
+        lambda _path: types.SimpleNamespace(
+            get_state=lambda: {"current_label": "start", "language": "english"}
+        ),
+    )
+
+    result = live.launch_game(str(tmp_path), language="german")
+
+    assert result["code"] == "SESSION_MODE_MISMATCH"
+    assert result["requested_language"] == "german"
+    assert result["active_language"] == "english"
+    assert result["language_applied"] is False
 
 
 def test_launch_game_reports_language_cannot_apply_when_project_is_locked(tmp_path, monkeypatch):

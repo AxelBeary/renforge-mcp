@@ -403,7 +403,10 @@ def test_catalog_states_exact_runtime_and_filesystem_contracts() -> None:
     assert "temporary" in launch.parameters["cleanup_on_stop"].lower()
     language = launch.parameters["language"].lower()
     assert "renpy_language" in language
-    assert "overrides" in language
+    assert "preferences.language" in language
+    assert "stored preference" in language
+    assert "savedir='temporary'" in language
+    assert "session only" not in language
     assert "already-running" in language
 
     launch_status = definitions["renforge_launch_status"].description.lower()

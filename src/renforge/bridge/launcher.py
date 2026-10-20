@@ -759,7 +759,12 @@ def _raise_bridge_startup_error(code: str) -> None:
 
 
 def normalize_language(language: str | None) -> str | None:
-    """Validate the optional ``RENPY_LANGUAGE`` override for the game process."""
+    """Validate the optional ``RENPY_LANGUAGE`` override for the game process.
+
+    The value becomes a process environment entry, so anything a shell or an
+    encoding step could reinterpret (control or surrogate code points, path
+    separators) is rejected here instead of failing later in ``Popen``.
+    """
     if language is None:
         return None
     if not isinstance(language, str):
@@ -773,11 +778,13 @@ def normalize_language(language: str | None) -> str | None:
     if (
         not value
         or len(value) > 64
-        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+        or not value.isprintable()
+        or "/" in value
+        or "\\" in value
     ):
         raise LaunchError(
             "LANGUAGE_INVALID",
-            "language must be 1-64 printable characters.",
+            "language must be 1-64 printable characters without '/' or '\\'.",
             phase="detecting_environment",
             suggested_fix="Pass a Ren'Py language code such as `japanese`, or omit the parameter.",
         )
@@ -814,8 +821,9 @@ def _launch_after_project_lock(
     ``savedir='temporary'`` isolates saves under a temp directory that is
     removed on session close when ``cleanup_on_stop`` is true.
 
-    ``language`` sets ``RENPY_LANGUAGE`` for this process, overriding the
-    player's stored language preference for the session.
+    ``language`` sets ``RENPY_LANGUAGE`` for this process. Ren'Py's
+    ``change_language`` persists the result as ``preferences.language``, so the
+    stored preference changes too; use an isolated savedir to contain it.
     """
     language = normalize_language(language)
     started = time.monotonic()

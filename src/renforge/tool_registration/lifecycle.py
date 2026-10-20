@@ -14,6 +14,33 @@ TOOL_NAMES = (
     "renforge_stop",
 )
 
+_LANGUAGE_RESULT_KEYS = ("requested_language", "active_language", "language_applied")
+
+
+def _annotate_unacknowledged_language(
+    result: dict[str, Any],
+    language: str | None,
+) -> dict[str, Any]:
+    """Mark a delegated launch that never acknowledged a requested language.
+
+    Older dashboards ignore the unknown ``language`` key. Their successful reply
+    contains no language fields, so without this note the launch would look as
+    if the language had been applied.
+    """
+    if language is None or any(key in result for key in _LANGUAGE_RESULT_KEYS):
+        return result
+    note = (
+        "The dashboard did not report language support, so the requested "
+        f"language {language!r} was not confirmed. Upgrade the dashboard or "
+        "launch without a language."
+    )
+    annotated = dict(result)
+    annotated["requested_language"] = language
+    annotated["language_applied"] = False
+    message = annotated.get("message")
+    annotated["message"] = f"{message} {note}" if isinstance(message, str) and message else note
+    return annotated
+
 
 def build_wrappers(context):
     live = context.live
@@ -90,7 +117,7 @@ def build_wrappers(context):
                         "launch_cancel_requested": True,
                     }
                 return live.cancelled_launch_result(phase="starting_renpy")
-            return delegated
+            return _annotate_unacknowledged_language(delegated, language)
         if cancel_event is not None and cancel_event.is_set():
             stopped = live.stop_external_game(project_path)
             if not stopped.get("ok"):
@@ -179,9 +206,14 @@ def build_wrappers(context):
         ``renforge_launch_status`` until it reports ``ready`` or ``failed``.
         display/audio default to auto; savedir='temporary' isolates saves.
         timeout controls the background startup deadline, not the MCP call.
-        ``language`` sets ``RENPY_LANGUAGE`` for a fresh game process and
-        overrides the player's stored language preference for that session; it
-        cannot change an already-running session.
+        ``language`` sets ``RENPY_LANGUAGE`` for a fresh game process. Ren'Py
+        persists it as ``preferences.language``, so this overrides the stored
+        preference, not just one session; for verification use
+        ``savedir="temporary"`` (and ``persistent="empty"``, which needs an
+        isolated savedir) or restore the language afterward. It cannot change an
+        already-running session. Only this tool accepts ``language``: a later
+        ``renforge_jump``/``renforge_new_game`` or dashboard Warp relaunch
+        starts without it and returns to the stored preference.
         """
         kwargs: dict[str, Any] = {
             "version": version,

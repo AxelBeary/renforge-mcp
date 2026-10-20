@@ -325,7 +325,10 @@ def test_launch_without_language_keeps_inherited_renpy_language(monkeypatch, tmp
     session.close(timeout=0.1)
 
 
-@pytest.mark.parametrize("language", ["   ", "ja\npanese", "x" * 65])
+@pytest.mark.parametrize(
+    "language",
+    ["   ", "ja\npanese", "x" * 65, "ja/panese", "ja\\panese", "ja\ud800panese"],
+)
 def test_launch_rejects_invalid_language(monkeypatch, tmp_path: Path, language: str) -> None:
     monkeypatch.setenv("DISPLAY", ":0")
     project, sdk, project_root = _make_project(tmp_path)

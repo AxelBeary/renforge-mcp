@@ -220,6 +220,20 @@ def _run_launch(
         task.done_event.set()
 
 
+def _language_verdict(language: str | None, active_language: Any) -> dict[str, Any]:
+    """Report whether a requested language is already the active one.
+
+    A reused session cannot switch language. Saying ``language_applied: false``
+    when the requested language is in fact already active would be a false
+    alarm, so the verdict distinguishes "already active" from "not applied".
+    """
+    if language is None:
+        return {}
+    if active_language == language:
+        return {"language_applied": True, "already_active": True}
+    return {"language_applied": False}
+
+
 def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
     elapsed_ms = int(((task.finished or time.monotonic()) - task.started) * 1000)
     if task.lifecycle == "starting" or not task.done_event.is_set():
@@ -273,7 +287,7 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
             }
         try:
             state = session.client.get_state()
-            return {
+            result = {
                 "ok": True,
                 "ready": True,
                 "status": "ready",
@@ -284,6 +298,13 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
                 "editor": bool(getattr(session, "editor", task.requested_editor)),
                 "elapsed_ms": elapsed_ms,
             }
+            # A reused session answers through launch_game; keep its verdict
+            # instead of rebuilding a silent ready payload from live state.
+            launch_result = task.result or {}
+            for key in ("already_running", "language_applied", "message"):
+                if key in launch_result:
+                    result[key] = launch_result[key]
+            return result
         except Exception:
             # Stale ready: initiate close and report closing/failure.
             try:
@@ -444,8 +465,10 @@ def _session_mode_mismatch(
     requested_editor: bool,
     existing_editor: bool,
     message: str,
+    requested_language: str | None = None,
+    active_language: Any = None,
 ) -> dict[str, Any]:
-    return {
+    result = {
         "ok": False,
         "ready": False,
         "code": "SESSION_MODE_MISMATCH",
@@ -454,7 +477,11 @@ def _session_mode_mismatch(
         "error": message,
         "requested_editor": requested_editor,
         "existing_editor": existing_editor,
+        "requested_language": requested_language,
+        "active_language": active_language,
     }
+    result.update(_language_verdict(requested_language, active_language))
+    return result
 
 
 def launch_game(
@@ -478,8 +505,11 @@ def launch_game(
     ``display`` / ``audio`` default to ``auto`` (native when available, else
     Xvfb + dummy SDL audio). Pass a ``session`` object or individual kwargs to
     isolate saves (``savedir='temporary'``) and persistent state. ``language``
-    sets ``RENPY_LANGUAGE`` for a fresh process only; it cannot change a
-    session that is already running.
+    sets ``RENPY_LANGUAGE`` for a fresh process only; Ren'Py persists it as
+    ``preferences.language``, so it changes the stored preference rather than
+    one session. For verification use ``savedir='temporary'`` (and
+    ``persistent='empty'``, which requires an isolated savedir) or restore the
+    language afterward. It cannot change a session that is already running.
     """
     try:
         language = normalize_language(language)
@@ -509,6 +539,11 @@ def launch_game(
     if existing is not None:
         existing_editor = bool(getattr(existing, "editor", False))
         if existing_editor != requested_editor:
+            active_language = None
+            try:
+                active_language = existing.client.get_state().get("language")
+            except Exception:
+                pass
             return _session_mode_mismatch(
                 requested_editor=requested_editor,
                 existing_editor=existing_editor,
@@ -516,6 +551,8 @@ def launch_game(
                     "The requested launch mode does not match the existing owned session. "
                     "Stop the running session before switching editor mode."
                 ),
+                requested_language=language,
+                active_language=active_language,
             )
         # Reuse a live session only when no warp is requested and it still
         # answers; otherwise tear it down (a warp needs a fresh --warp launch,
@@ -523,6 +560,7 @@ def launch_game(
         if warp is None and existing.process.poll() is None:
             try:
                 state = existing.client.get_state()
+                active_language = state.get("language")
                 result = {
                     "ok": True,
                     "already_running": True,
@@ -530,10 +568,11 @@ def launch_game(
                     "current_label": state.get("current_label"),
                     "editor": existing_editor,
                     "requested_language": language,
-                    "active_language": state.get("language"),
+                    "active_language": active_language,
                 }
-                if language is not None:
-                    result["language_applied"] = False
+                verdict = _language_verdict(language, active_language)
+                result.update(verdict)
+                if verdict.get("language_applied") is False:
                     result["message"] = (
                         "The requested language cannot be applied to the already-running session. "
                         "Stop it and launch again to change language."
@@ -574,6 +613,7 @@ def launch_game(
         try:
             external = _client(project.root)
             state = external.get_state()
+            active_language = state.get("language")
             if requested_editor:
                 return _session_mode_mismatch(
                     requested_editor=True,
@@ -582,8 +622,10 @@ def launch_game(
                         "Editor mode cannot be proven for an external session. "
                         "Launch from this RenForge process with editor=true instead."
                     ),
+                    requested_language=language,
+                    active_language=active_language,
                 )
-            return {
+            result = {
                 "ok": True,
                 "already_running": True,
                 "external": True,
@@ -591,24 +633,21 @@ def launch_game(
                 "current_label": state.get("current_label"),
                 "editor": False,
                 "requested_language": language,
-                "active_language": state.get("language"),
-                **(
-                    {
-                        "language_applied": False,
-                        "message": (
-                            "The requested language cannot be applied to the already-running "
-                            "external session. Stop it and launch again to change language."
-                        ),
-                    }
-                    if language is not None
-                    else {}
-                ),
+                "active_language": active_language,
             }
+            verdict = _language_verdict(language, active_language)
+            result.update(verdict)
+            if verdict.get("language_applied") is False:
+                result["message"] = (
+                    "The requested language cannot be applied to the already-running "
+                    "external session. Stop it and launch again to change language."
+                )
+            return result
         except Exception:
             pass
     else:
         try:
-            _client(project.root).get_state()
+            state = _client(project.root).get_state()
         except Exception:
             pass
         else:
@@ -616,6 +655,7 @@ def launch_game(
                 "Another RenForge bridge session is active for this project. "
                 "Stop it from the owning RenForge session before launching with warp."
             )
+            active_language = state.get("language")
             result = {
                 "ok": False,
                 "ready": False,
@@ -624,12 +664,14 @@ def launch_game(
                 "message": message,
                 "error": message,
                 "requested_language": language,
+                "active_language": active_language,
             }
-            if language is not None:
+            verdict = _language_verdict(language, active_language)
+            result.update(verdict)
+            if verdict.get("language_applied") is False:
                 note = " The requested language cannot be applied to the existing session."
                 result["message"] = message + note
                 result["error"] = message + note
-                result["language_applied"] = False
             return result
 
     if cancel_event is not None and cancel_event.is_set():
@@ -698,6 +740,13 @@ def launch_game(
         result["bridge_port"] = session_obj.client._config.port
     except Exception:
         pass
+    if language is not None and active_language is not None:
+        result["language_applied"] = active_language == language
+        if active_language != language:
+            result["message"] = (
+                "Ren'Py reports active language %r instead of the requested %r."
+                % (active_language, language)
+            )
     if session_obj.temporary_savedir is not None:
         result["savedir"] = str(session_obj.temporary_savedir)
     if session_obj.headless:

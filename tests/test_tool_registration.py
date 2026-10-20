@@ -88,3 +88,31 @@ def test_public_tool_contract_matches_agent_safe_baseline() -> None:
     assert len(contract) == 55
     assert set(contract) == set(TOOL_DEFINITIONS)
     assert contract == snapshot
+
+
+def test_launch_marks_language_not_reported_by_an_old_dashboard(tmp_path, monkeypatch) -> None:
+    from renforge import dashboard_client
+
+    project = tmp_path / "project"
+    (project / "game").mkdir(parents=True)
+    (project / "game" / "script.rpy").write_text("label start:\n    return\n", encoding="utf-8")
+    monkeypatch.setattr(
+        dashboard_client,
+        "launch_game",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "ready": True,
+            "already_running": False,
+            "current_label": "start",
+            "via": "dashboard",
+        },
+    )
+    launch = build_tool_wrappers(_MetadataToolRegistry())["renforge_launch"]
+
+    result = launch(str(project), language="german")
+
+    assert result["ok"] is True
+    assert result["requested_language"] == "german"
+    assert result["language_applied"] is False
+    assert "did not report language support" in result["message"]
+    assert result["via"] == "dashboard"
