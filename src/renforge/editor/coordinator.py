@@ -40,6 +40,7 @@ from .paths import (
     sha256_bytes,
 )
 from .runtime import RuntimeProbe
+from .scope import require_in_scope
 from .shadow import ShadowLintResult, build_shadow_project, run_shadow_lint
 from .source import (
     BAR_SIZE_MODE_XSIZE_YSIZE,
@@ -1263,6 +1264,7 @@ class EditorCoordinator:
 
         relative_path = next(iter(source_paths))
         source_path = resolve_game_path(self._project.root, relative_path)
+        require_in_scope(self._project.root, relative_path)
         current_bytes = source_path.read_bytes()
         current_sha = sha256_bytes(current_bytes)
 
@@ -1346,6 +1348,7 @@ class EditorCoordinator:
                 raise EditorError("GUI_RPY_PATH_MISSING", "gui.rpy path is missing from source_key")
 
             gui_absolute = resolve_game_path(self._project.root, gui_rpy_path)
+            require_in_scope(self._project.root, gui_rpy_path)
             gui_current_bytes = gui_absolute.read_bytes()
             gui_current_sha = sha256_bytes(gui_current_bytes)
 
@@ -1552,6 +1555,7 @@ class EditorCoordinator:
         if not (is_style_color_tx or is_structural_tx or is_say_style_position_tx):
             raise EditorError("UNDO_STYLE_COLOR_ONLY", "product commit undo is limited to text style color, zorder structural swap, and say.what style position")
 
+        require_in_scope(self._project.root, prior.source_relative_path)
         current_bytes = prior.source_absolute_path.read_bytes()
         current_sha = sha256_bytes(current_bytes)
         if current_sha != prior.staged_sha256:

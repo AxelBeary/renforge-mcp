@@ -548,6 +548,210 @@ def test_commit_refuses_stale_source_and_duplicate_intent_ids(tmp_path: Path) ->
         coordinator.close()
 
 
+def test_commit_refuses_target_outside_write_scope_before_persisting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, source = _make_project(tmp_path)
+    observation = _base_observation()
+    probe = _Probe(
+        observe_reply={
+            **observation,
+            "frame_id": "independent-scope-frame",
+            "object_id": "obj-independent-scope",
+        }
+    )
+    coordinator = EditorCoordinator(project, _make_sdk(tmp_path))
+    coordinator.attach_runtime_probe(probe)
+    endpoint = coordinator.start()
+    transaction_root = project.root / ".renforge" / "editor-transactions"
+    baseline = source.read_bytes()
+    try:
+        with socket.create_connection((endpoint.host, endpoint.port), timeout=2.0) as sock:
+            auth = _auth(sock, endpoint)
+            analysis = _analyze(sock, auth, observation, request_id="an-scope")
+            assert analysis["ok"] is True
+            assert analysis["result"]["lock_reason"] is None
+
+            monkeypatch.setenv("RENFORGE_ALLOW_PATHS", "screens/*.rpy")
+            refused = _commit(sock, auth, analysis, x=333, y=444, request_id="co-scope-refused")
+            assert refused["ok"] is False
+            assert refused["error"]["code"] == "PATH_OUT_OF_SCOPE"
+            assert refused["error"]["details"] == {
+                "path": "script.rpy",
+                "scope": ["screens/*.rpy"],
+            }
+            assert "script.rpy" in refused["error"]["message"]
+            assert "screens/*.rpy" in refused["error"]["message"]
+            assert source.read_bytes() == baseline
+            assert list(transaction_root.iterdir()) == []
+
+            # Unset scope keeps the old behavior on a retry of the same analysis.
+            monkeypatch.delenv("RENFORGE_ALLOW_PATHS")
+            committed = _commit(sock, auth, analysis, x=333, y=444, request_id="co-scope-unset")
+            assert committed["ok"] is True
+            assert "xpos 333 ypos 444" in source.read_text(encoding="utf-8")
+    finally:
+        coordinator.close()
+
+
+def test_style_backed_commit_refuses_gui_rpy_outside_write_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "project_scope_gui"
+    game_dir = root / "game"
+    game_dir.mkdir(parents=True)
+    screens = game_dir / "screens.rpy"
+    screens_text = (
+        'screen say(who, what):\n'
+        '    text what id "what" style "say_dialogue"\n'
+        '\n'
+        'style say_dialogue:\n'
+        '    xpos gui.dialogue_xpos\n'
+        '    ypos gui.dialogue_ypos\n'
+    )
+    screens.write_text(screens_text, encoding="utf-8")
+    gui = game_dir / "gui.rpy"
+    gui_baseline = b"define gui.dialogue_xpos = gui.scale(268)\ndefine gui.dialogue_ypos = gui.scale(50)\n"
+    gui.write_bytes(gui_baseline)
+    observation = {
+        "runtime_key": {
+            "screen": "say",
+            "invocation_path": "say",
+            "widget_id": "what",
+            "source_location": ["screens.rpy", 2],
+            "instance_discriminator": {"kind": "singleton", "instance_count": 1},
+            "ancestry": [
+                {
+                    "index": 0,
+                    "type": "ScreenDisplayable",
+                    "source_location": ["screens.rpy", 1],
+                    "screen_owner": "say",
+                    "crop_state": "none",
+                    "editor_owned": False,
+                },
+                {
+                    "index": 1,
+                    "type": "Text",
+                    "source_location": ["screens.rpy", 2],
+                    "screen_owner": "say",
+                    "crop_state": "none",
+                    "editor_owned": False,
+                },
+            ],
+        },
+        "rect": [268, 585, 500, 30],
+        "measurement_method": "scene_tree_text",
+        "frame_id": "scope-gui-frame",
+        "script_generation": 4,
+        "object_id": "scope-gui-what",
+    }
+    probe = _Probe(observe_reply={**observation, "frame_id": "scope-gui-independent"})
+    coordinator = EditorCoordinator(RenpyProject(root), _make_sdk(tmp_path), attestation_timeout=2.0)
+    coordinator.attach_runtime_probe(probe)
+    endpoint = coordinator.start()
+    transaction_root = root / ".renforge" / "editor-transactions"
+    try:
+        with socket.create_connection((endpoint.host, endpoint.port), timeout=2.0) as sock:
+            auth = _auth(sock, endpoint)
+            analysis = _analyze(sock, auth, observation, request_id="an-scope-gui")
+            assert analysis["ok"] is True
+            assert analysis["result"]["capabilities"]["move"] is True
+
+            monkeypatch.setenv("RENFORGE_ALLOW_PATHS", "screens.rpy")
+            refused = _commit(sock, auth, analysis, x=288, y=80, request_id="co-scope-gui")
+            assert refused["ok"] is False
+            assert refused["error"]["code"] == "PATH_OUT_OF_SCOPE"
+            assert refused["error"]["details"] == {"path": "gui.rpy", "scope": ["screens.rpy"]}
+            assert "gui.rpy" in refused["error"]["message"]
+            assert "screens.rpy" in refused["error"]["message"]
+            assert screens.read_text(encoding="utf-8") == screens_text
+            assert gui.read_bytes() == gui_baseline
+            assert list(transaction_root.iterdir()) == []
+    finally:
+        coordinator.close()
+
+
+def test_undo_commit_refuses_target_outside_write_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "project_undo_scope"
+    game_dir = root / "game"
+    game_dir.mkdir(parents=True)
+    source = game_dir / "script.rpy"
+    baseline = (
+        "screen test_screen:\n"
+        '    text "STYLE" id "style_color_target" color "#e22b2b" size 96 xpos 240 ypos 220\n'
+    )
+    source.write_text(baseline, encoding="utf-8")
+    observation = _style_color_observation()
+    probe = _Probe(
+        observe_reply={
+            **json.loads(json.dumps(observation)),
+            "frame_id": "undo-scope-independent",
+        }
+    )
+    coordinator = EditorCoordinator(RenpyProject(root), _make_sdk(tmp_path), attestation_timeout=2.0)
+    coordinator.attach_runtime_probe(probe)
+    endpoint = coordinator.start()
+    transaction_root = root / ".renforge" / "editor-transactions"
+    try:
+        with socket.create_connection((endpoint.host, endpoint.port), timeout=2.0) as sock:
+            auth = _auth(sock, endpoint)
+            analyzed = _analyze(sock, auth, observation, request_id="an-undo-scope")
+            assert analyzed["ok"] is True
+            result = analyzed["result"]
+            probe.observe_reply["style_color"] = "#2457d6"
+            probe.observe_reply["rect"] = [260, 230, 286, 112]
+
+            committed = _send_editor_command(
+                sock,
+                auth,
+                command="commit",
+                payload={
+                    "session_id": auth["session_id"],
+                    "intents": [
+                        {
+                            "analysis_id": result["analysis_id"],
+                            "source_key": result["source_key"],
+                            "x": 260,
+                            "y": 230,
+                            "color": "#2457d6",
+                        }
+                    ],
+                },
+                request_id="co-undo-scope",
+            )
+            assert committed["ok"] is True
+            transaction_id = committed["result"]["transaction_id"]
+            handshake = _send_editor_command(
+                sock,
+                auth,
+                command="reload_handshake",
+                payload={"transaction_id": transaction_id, "script_generation": 21},
+                request_id="hs-undo-scope",
+            )
+            assert handshake["ok"] is True
+            assert handshake["result"]["state"] == "committed"
+            committed_bytes = source.read_bytes()
+
+            monkeypatch.setenv("RENFORGE_ALLOW_PATHS", "screens/*.rpy")
+            refused = _send_editor_command(
+                sock,
+                auth,
+                command="undo_commit",
+                payload={"session_id": auth["session_id"], "transaction_id": transaction_id},
+                request_id="undo-scope-refused",
+            )
+            assert refused["ok"] is False
+            assert refused["error"]["code"] == "PATH_OUT_OF_SCOPE"
+            assert "script.rpy" in refused["error"]["message"]
+            assert "screens/*.rpy" in refused["error"]["message"]
+            assert source.read_bytes() == committed_bytes
+            assert [child.name for child in transaction_root.iterdir()] == [transaction_id]
+    finally:
+        coordinator.close()
+
+
 def test_commit_shadow_isolation_and_validation_failure_diagnostics(tmp_path: Path) -> None:
     project, source = _make_project(tmp_path)
     (project.root / ".lint_touch").write_text("1\n", encoding="utf-8")
