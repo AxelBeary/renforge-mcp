@@ -7197,6 +7197,7 @@ init 1100 python:
             ),
             "pending_transaction_id": state.pending_transaction_id,
             "pending_operation": state.pending_operation,
+            "last_commit_status": state.last_commit_status,
             "last_committed_transaction_id": state.last_committed_transaction_id,
             "last_undone_transaction_id": state.last_undone_transaction_id,
             "style_color_input": state.style_color_input,

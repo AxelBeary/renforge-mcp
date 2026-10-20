@@ -63,13 +63,16 @@ def generate_translations(sdk: RenpySdk, project: RenpyProject, language: str, *
     """Generate/update translation files for ``language`` (writes game/tl/<language>/)."""
     command = project.renpy_command(sdk, ("translate", language))
     result = run_command(command, timeout=timeout)
-    return {
-        "ok": result.returncode == 0,
+    ok = result.returncode == 0
+    payload: dict[str, Any] = {
+        "ok": ok,
         "language": language,
         "returncode": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,
+        "files_touched": ["game/tl/%s" % language] if ok else [],
     }
+    return payload
 
 
 def translation_stats(sdk: RenpySdk, project: RenpyProject, language: str, *, timeout: int = 180) -> dict[str, Any]:
@@ -95,13 +98,17 @@ def export_dialogue(sdk: RenpySdk, project: RenpyProject, language: str = "None"
     """Export the game's dialogue as plain text."""
     command = project.renpy_command(sdk, ("dialogue", language, "--text"))
     result = run_command(command, timeout=timeout)
-    return {
-        "ok": result.returncode == 0,
+    ok = result.returncode == 0
+    payload: dict[str, Any] = {
+        "ok": ok,
         "language": language,
         "returncode": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,
+        # Ren'Py writes this file at the project root (see renforge_export_dialogue).
+        "files_touched": ["dialogue.txt"] if ok else [],
     }
+    return payload
 
 
 def list_translation_strings(project_path: str | Path, language: str) -> list[dict[str, Any]]:

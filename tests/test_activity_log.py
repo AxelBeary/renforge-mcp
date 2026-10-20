@@ -5,11 +5,178 @@ from pathlib import Path
 
 import pytest
 
-from renforge.activity_log import log_tool_call
+from renforge.activity_log import log_tool_call, summarize_result
 
 
 def _read_activity(project: Path) -> bytes:
     return (project / ".renforge" / "activity.jsonl").read_bytes()
+
+
+def _read_entry(project: Path) -> dict:
+    return json.loads(_read_activity(project))
+
+
+def test_summarize_result_reads_only_explicit_write_receipts() -> None:
+    legacy = summarize_result(
+        {"ok": True, "files": ["a.rpy"], "changed_files": ["b.rpy"], "changed": ["c"]}
+    )
+    assert legacy["files_touched"] == []
+    assert legacy["files_deleted"] == []
+    assert legacy["files_touched_recorded"] is False
+
+    explicit = summarize_result(
+        {
+            "ok": True,
+            "files_touched": ["game/a.rpy"],
+            "files_deleted": ["game/b.rpy"],
+        }
+    )
+    assert explicit["files_touched"] == ["game/a.rpy"]
+    assert explicit["files_deleted"] == ["game/b.rpy"]
+    assert explicit["files_touched_recorded"] is True
+
+
+def test_activity_log_does_not_treat_legacy_files_as_writes(tmp_path: Path) -> None:
+    log_tool_call(
+        tmp_path,
+        "renforge_scan_project",
+        {"project_path": str(tmp_path)},
+        1.0,
+        {"ok": True, "files": ["game/read_only.rpy"], "changed_files": ["nope.rpy"]},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched"] == []
+    assert entry["files_touched_recorded"] is False
+    assert entry["files_touched_truncated"] is False
+    assert "files_touched_file" not in entry
+
+
+def test_activity_log_marks_explicit_receipts_recorded(tmp_path: Path) -> None:
+    log_tool_call(
+        tmp_path,
+        "renforge_scene_tree",
+        {"project_path": str(tmp_path)},
+        2.0,
+        {
+            "ok": True,
+            "files_touched": ["game/.renforge/scenes/before.json"],
+            "files_deleted": ["game/old.rpy"],
+        },
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched"] == ["game/.renforge/scenes/before.json"]
+    assert entry["files_deleted"] == ["game/old.rpy"]
+    assert entry["files_touched_recorded"] is True
+    assert entry["files_touched_truncated"] is False
+
+
+def test_activity_log_overflow_keeps_the_compact_receipt(tmp_path: Path) -> None:
+    bloated_params = {f"field_{index}": "x" * 500 for index in range(30)}
+    log_tool_call(
+        tmp_path,
+        "renforge_set_var",
+        {"project_path": str(tmp_path), **bloated_params},
+        1.0,
+        {"ok": True, "files_touched": ["game/screens.rpy"]},
+    )
+
+    raw = _read_activity(tmp_path)
+    assert len(raw) <= 8192
+    entry = json.loads(raw)
+    assert entry["params"] == {"truncated": True}
+    assert entry["files_touched"] == ["game/screens.rpy"]
+    assert entry["files_touched_recorded"] is True
+    assert entry["files_touched_truncated"] is False
+    assert "files_touched_file" not in entry
+
+
+def test_activity_log_overflow_spills_full_path_list_to_private_sidecar(
+    tmp_path: Path,
+) -> None:
+    paths = ["game/" + ("d" * 400) + f"/file_{index}.rpy" for index in range(60)]
+
+    log_tool_call(
+        tmp_path,
+        "renforge_generate_translations",
+        {"project_path": str(tmp_path)},
+        3.0,
+        {"ok": True, "files_touched": paths},
+    )
+
+    raw = _read_activity(tmp_path)
+    assert len(raw) <= 8192
+    entry = json.loads(raw)
+    assert entry["files_touched_truncated"] is True
+    assert entry["files_touched"], "overflow must not empty files_touched"
+    assert len(entry["files_touched"]) <= 32
+    assert entry["files_touched_file"].startswith(".renforge/activity-files/")
+    assert not entry["files_touched_file"].startswith("/")
+
+    sidecar_path = tmp_path / entry["files_touched_file"]
+    assert sidecar_path.is_file()
+    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert sidecar["files_touched"] == paths
+
+
+def test_activity_log_sidecar_is_only_written_when_the_list_is_truncated(
+    tmp_path: Path,
+) -> None:
+    paths = [f"game/file_{index}.rpy" for index in range(33)]
+    log_tool_call(
+        tmp_path,
+        "renforge_web_build",
+        {"project_path": str(tmp_path)},
+        4.0,
+        {"ok": True, "files_touched": paths},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched_truncated"] is True
+    assert len(entry["files_touched"]) == 32
+    sidecar_path = tmp_path / entry["files_touched_file"]
+    assert sidecar_path.is_file()
+    assert json.loads(sidecar_path.read_text(encoding="utf-8"))["files_touched"] == paths
+
+
+def test_read_only_wrapper_is_not_journaled_even_when_the_result_has_writes(
+    tmp_path: Path,
+) -> None:
+    from renforge.tool_registration.wrappers import _log_tool_call
+
+    result = _log_tool_call(
+        name="renforge_scan_project",
+        params={"project_path": str(tmp_path)},
+        project_root=str(tmp_path),
+        fn=lambda: {"ok": True, "files_touched": ["game/read_only.rpy"]},
+        args=(),
+        kwargs={},
+    )
+
+    assert result["files_touched"] == ["game/read_only.rpy"]
+    assert not (tmp_path / ".renforge" / "activity.jsonl").exists()
+
+
+def test_mutating_wrapper_journals_the_explicit_receipt(tmp_path: Path) -> None:
+    from renforge.tool_registration.wrappers import _log_tool_call
+
+    result = _log_tool_call(
+        name="renforge_capture_screenshot",
+        params={"project_path": str(tmp_path), "name": "frame"},
+        project_root=str(tmp_path),
+        fn=lambda: {
+            "ok": True,
+            "files_touched": [".renforge/captures/frame.png"],
+        },
+        args=(),
+        kwargs={},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert result["files_touched"] == [".renforge/captures/frame.png"]
+    assert entry["files_touched"] == [".renforge/captures/frame.png"]
+    assert entry["files_touched_recorded"] is True
 
 
 def test_activity_log_redacts_compound_secret_keys(tmp_path: Path) -> None:

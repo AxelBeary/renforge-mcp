@@ -196,7 +196,7 @@ def test_stop_game_issues_authenticated_quit_when_bridge_alive(
 
     result = live.stop_game(str(project))
 
-    assert result == {"ok": True, "was_running": True}
+    assert result == {"ok": True, "was_running": True, "files_deleted": []}
     assert client.control_calls == ["quit"]
 
 

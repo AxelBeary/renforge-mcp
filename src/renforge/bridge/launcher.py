@@ -481,6 +481,7 @@ def remove_bridge_artifacts(
     *,
     expected_session_id: str | None = None,
     remove_bridge_info: bool = True,
+    removed: list[str] | None = None,
 ) -> bool:
     """Remove schema-3 owned session artifacts after full ownership validation.
 
@@ -488,12 +489,15 @@ def remove_bridge_artifacts(
     complete proven removal. Legacy fixed names, ``traceback.txt``,
     ``errors.txt``, and unowned pre-migration metadata are never touched.
     ``remove_bridge_info=False`` removes only source and asset artifacts.
+    When ``removed`` is given, deleted project-relative POSIX paths are
+    appended to it.
     """
     try:
         return remove_owned_artifacts(
             Path(project_root),
             expected_session_id=expected_session_id,
             remove_bridge_info=remove_bridge_info,
+            removed=removed,
         )
     except ArtifactOwnershipError as exc:
         # Preserve fail-closed cleanup for BridgeSession retries.
@@ -552,7 +556,11 @@ class BridgeSession:
         """Stop the game, Xvfb group if any, and temporary session files."""
         with self._close_lock:
             if self._closed:
-                return self._close_result or {"cleaned": self._cleaned, "failed": ["close"]}
+                return self._close_result or {
+                    "cleaned": self._cleaned,
+                    "failed": ["close"],
+                    "files_deleted": [],
+                }
             self._close_result = self._close_resources(timeout)
             ownership_failures = {"process_alive", "bridge_artifacts", "temporary_savedir", "editor_coordinator"}
             if ownership_failures.intersection(self._close_result.get("failed", [])):
@@ -572,6 +580,7 @@ class BridgeSession:
             "editor_coordinator": self._editor_coordinator is None,
         }
         failed: list[str] = []
+        removed: list[str] = []
 
         if self._editor_coordinator is not None:
             try:
@@ -606,7 +615,7 @@ class BridgeSession:
             if self.process.poll() is None:
                 failed.append("process_alive")
                 self._cleaned = cleaned
-                return {"cleaned": cleaned, "failed": failed}
+                return {"cleaned": cleaned, "failed": failed, "files_deleted": removed}
             cleaned["renpy_process"] = True
         else:
             # Already exited: reap it so it does not linger as a zombie.
@@ -622,7 +631,11 @@ class BridgeSession:
                 if self._project_lock is not None
                 else None
             )
-            remove_bridge_artifacts(self._project_root, expected_session_id=expected)
+            remove_bridge_artifacts(
+                self._project_root,
+                expected_session_id=expected,
+                removed=removed,
+            )
             cleaned["bridge_artifacts"] = True
         except Exception:
             failed.append("bridge_artifacts")
@@ -637,7 +650,7 @@ class BridgeSession:
                 failed.append("temporary_savedir")
 
         self._cleaned = cleaned
-        result: dict[str, Any] = {"cleaned": cleaned}
+        result: dict[str, Any] = {"cleaned": cleaned, "files_deleted": removed}
         if failed:
             result["failed"] = failed
         return result

@@ -1876,6 +1876,7 @@ def test_analyze_and_commit_imagebutton_statement(tmp_path: Path) -> None:
                 f"error={committed.get('error')!r} diagnostics={committed.get('diagnostics')!r} full={committed!r}"
             )
             assert committed["result"]["state"] == "published"
+            assert committed["result"]["source_relative_path"] == "script.rpy"
             assert "xpos 40 ypos 50" in source.read_text(encoding="utf-8")
             assert 'imagebutton id "start_btn"' in source.read_text(encoding="utf-8")
 
@@ -3629,3 +3630,30 @@ def test_expected_measurement_method_for_add_and_frame() -> None:
     assert expected_measurement_method("add") == "scene_tree_displayable"
     assert expected_measurement_method("frame") == "scene_tree_displayable"
     assert expected_measurement_method("textbutton") == "focus_list"
+
+
+def test_editor_save_view_reports_the_committed_source_path() -> None:
+    from renforge.tools.live import _editor_public_view
+
+    raw = {
+        "ok": True,
+        "active": True,
+        "last_commit_status": {
+            "state": "published",
+            "source_relative_path": "screens.rpy",
+        },
+    }
+
+    saved = _editor_public_view(raw, action="save", frame_id="frame-1")
+    assert saved["files_touched"] == ["screens.rpy"]
+
+    status = _editor_public_view(raw, action="status", frame_id="frame-1")
+    assert "files_touched" not in status
+
+    failed = _editor_public_view(
+        {**raw, "error": "SAVE_UNAVAILABLE"},
+        action="save",
+        frame_id="frame-1",
+    )
+    assert failed["ok"] is False
+    assert "files_touched" not in failed

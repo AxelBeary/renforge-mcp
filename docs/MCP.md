@@ -487,6 +487,18 @@ writes a JSON snapshot under `<project>/.renforge/scenes/` for later diffing.
 `renforge_scene_tree` is the structured alternative to the `renforge_eval` style
 escape hatch above.
 
+### Write receipts
+
+Mutating tools name what they wrote: `files_touched` lists paths, and cleanup
+tools also return `files_deleted`. Paths inside the project are relative POSIX;
+Ren'Py savedir paths stay absolute and are labeled by the explicit `savedir`
+field. Each `.renforge/activity.jsonl` entry carries `files_touched_recorded`
+(true when the result explicitly reported paths), `files_touched_truncated`
+(true when only a compact list is stored), and, when the full list was spilled,
+`files_touched_file` — a 0600 JSON sidecar under `.renforge/activity-files/`.
+Entries keep at most 32 paths in `files_touched`; on overflow, verbose params
+and result details are dropped first, never the write receipt.
+
 Recommended practices:
 
 - prefer `renforge_game_state_compact` to the full state;

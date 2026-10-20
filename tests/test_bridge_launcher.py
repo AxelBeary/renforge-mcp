@@ -316,11 +316,22 @@ def test_remove_bridge_artifacts_deletes_injected_and_runtime_files(tmp_path: Pa
     assert owned_source.exists()
     assert artifacts_path(tmp_path).exists()
 
-    assert remove_bridge_artifacts(tmp_path, expected_session_id=materialized.session_id) is True
+    removed: list[str] = []
+    assert (
+        remove_bridge_artifacts(
+            tmp_path,
+            expected_session_id=materialized.session_id,
+            removed=removed,
+        )
+        is True
+    )
 
     assert not owned_source.exists()
     assert not owned_info.exists()
     assert not artifacts_path(tmp_path).exists()
+    assert f"game/{owned_source.name}" in removed
+    assert ".renforge/control/bridge.json" in removed
+    assert ".renforge/control/artifacts.json" in removed
     # Unowned / legacy paths preserved.
     assert legacy_inject.exists()
     assert (game / "renforge_bridge.rpyc").exists()
@@ -340,6 +351,7 @@ def test_bridge_session_close_kills_running_game(tmp_path: Path) -> None:
     assert process.killed is True
     assert process.terminated is False
     assert session.closed is True
+    assert session.close()["files_deleted"] == []
 
     injected = tmp_path / "game" / "renforge_bridge.rpy"
     injected.parent.mkdir()
