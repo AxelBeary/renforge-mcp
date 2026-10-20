@@ -3632,8 +3632,8 @@ def test_expected_measurement_method_for_add_and_frame() -> None:
     assert expected_measurement_method("textbutton") == "focus_list"
 
 
-def test_editor_save_view_reports_the_committed_source_path() -> None:
-    from renforge.tools.live import _editor_public_view
+def test_editor_save_receipt_reads_only_a_completed_commit() -> None:
+    from renforge.tools.live import _editor_public_view, _editor_saved_paths
 
     raw = {
         "ok": True,
@@ -3644,16 +3644,11 @@ def test_editor_save_view_reports_the_committed_source_path() -> None:
         },
     }
 
-    saved = _editor_public_view(raw, action="save", frame_id="frame-1")
-    assert saved["files_touched"] == ["screens.rpy"]
+    assert _editor_saved_paths(raw) == ["screens.rpy"]
+    # The public view stays pure; the save path adds the receipt only after
+    # the current request has settled.
+    view = _editor_public_view(raw, action="save", frame_id="frame-1")
+    assert "files_touched" not in view
 
-    status = _editor_public_view(raw, action="status", frame_id="frame-1")
-    assert "files_touched" not in status
-
-    failed = _editor_public_view(
-        {**raw, "error": "SAVE_UNAVAILABLE"},
-        action="save",
-        frame_id="frame-1",
-    )
-    assert failed["ok"] is False
-    assert "files_touched" not in failed
+    assert _editor_saved_paths({"last_commit_status": {"state": "failed"}}) == []
+    assert _editor_saved_paths({"last_commit_status": None}) == []

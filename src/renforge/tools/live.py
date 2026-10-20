@@ -1354,16 +1354,18 @@ def _editor_public_view(
     if raw.get("error") is not None:
         view["ok"] = False
         view["error"] = raw["error"]
-    if action == "save" and view["ok"]:
-        # The bridge reports the transaction it just committed. Only a
-        # committed/published transaction is a write receipt; a status read or
-        # a failed save must not claim a file. Older bridges simply omit it.
-        commit = raw.get("last_commit_status")
-        if isinstance(commit, dict) and commit.get("state") in {"published", "committed"}:
-            source = commit.get("source_relative_path")
-            if isinstance(source, str) and source:
-                view["files_touched"] = [source]
     return view
+
+
+def _editor_saved_paths(raw: dict[str, Any]) -> list[str]:
+    """Return the source path of the commit this save produced, if any."""
+    commit = raw.get("last_commit_status")
+    if not isinstance(commit, dict):
+        return []
+    if commit.get("state") not in {"published", "committed"}:
+        return []
+    source = commit.get("source_relative_path")
+    return [source] if isinstance(source, str) and source else []
 
 
 def _editor_read_status(client: BridgeClient) -> dict[str, Any]:
@@ -1490,6 +1492,13 @@ def editor(
         if settled.get("save_error"):
             view["ok"] = False
             view["error"] = settled.get("save_error")
+        elif settled.get("save_in_progress") or settled.get("save_requested"):
+            view["ok"] = False
+            view["error"] = "SAVE_TIMEOUT"
+        else:
+            saved_paths = _editor_saved_paths(settled)
+            if saved_paths:
+                view["files_touched"] = saved_paths
         return view
 
     return _with_client(project_path, _handler)

@@ -556,11 +556,12 @@ class BridgeSession:
         """Stop the game, Xvfb group if any, and temporary session files."""
         with self._close_lock:
             if self._closed:
-                return self._close_result or {
-                    "cleaned": self._cleaned,
-                    "failed": ["close"],
-                    "files_deleted": [],
-                }
+                result = dict(
+                    self._close_result
+                    or {"cleaned": self._cleaned, "failed": ["close"]}
+                )
+                result.setdefault("files_deleted", [])
+                return result
             self._close_result = self._close_resources(timeout)
             ownership_failures = {"process_alive", "bridge_artifacts", "temporary_savedir", "editor_coordinator"}
             if ownership_failures.intersection(self._close_result.get("failed", [])):

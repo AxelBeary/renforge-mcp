@@ -6571,6 +6571,7 @@ init 1100 python:
         state.save_requested = True
         state.save_error = None
         state.save_last_error = None
+        state.last_commit_status = None
         state.pending_commit_is_style_color = bool(
             intents
             and all(
