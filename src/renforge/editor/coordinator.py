@@ -1264,7 +1264,6 @@ class EditorCoordinator:
 
         relative_path = next(iter(source_paths))
         source_path = resolve_game_path(self._project.root, relative_path)
-        require_in_scope(self._project.root, relative_path)
         current_bytes = source_path.read_bytes()
         current_sha = sha256_bytes(current_bytes)
 
@@ -1425,7 +1424,10 @@ class EditorCoordinator:
                 state="staged",
             )
         else:
-            # Normal single-file transaction (screens.rpy)
+            # Normal single-file transaction (screens.rpy). Only this file is
+            # written, so scope is enforced against it rather than against the
+            # identity file of a style-backed gui write.
+            require_in_scope(self._project.root, relative_path)
             transaction_id = uuid.uuid4().hex
             transaction = _TransactionRecord(
                 transaction_id=transaction_id,

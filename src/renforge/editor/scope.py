@@ -7,6 +7,10 @@ may touch. It is a comma-separated list of game-relative POSIX glob patterns:
   ``/`` (unlike plain ``fnmatch`` on the whole path).
 * ``**`` as a whole segment matches zero or more directories.
 
+Matching is case-sensitive POSIX matching on every platform, including
+Windows. Drive-letter prefixes and trailing slashes are rejected rather than
+silently rewritten; such patterns fail closed like any other invalid pattern.
+
 When the variable is unset or blank, no extra scope applies and the fixed
 ``game/`` confinement in :mod:`renforge.editor.paths` is the only rule.
 Invalid patterns fail closed: every commit and undo is refused with
@@ -17,8 +21,10 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from functools import lru_cache
+from pathlib import Path, PurePosixPath
 
 from .exceptions import EditorError
 from .paths import (
@@ -29,6 +35,23 @@ from .paths import (
 )
 
 ENV_ALLOW_PATHS = "RENFORGE_ALLOW_PATHS"
+
+_DRIVE_LETTER_PREFIX = re.compile(r"^[A-Za-z]:")
+
+
+def _validate_scope_pattern(pattern: str) -> PurePosixPath:
+    """Reject spellings that only exist on Windows and cannot be matched."""
+    if _DRIVE_LETTER_PREFIX.match(pattern):
+        raise EditorPathError(
+            "PATH_DRIVE_LETTER_REJECTED",
+            "drive-letter prefixes are not allowed",
+        )
+    if pattern.endswith("/"):
+        raise EditorPathError(
+            "PATH_TRAILING_SLASH_REJECTED",
+            "trailing slashes are not allowed",
+        )
+    return _validate_relative_path(pattern)
 
 
 def load_path_scope(env: Mapping[str, str] | None = None) -> tuple[str, ...] | None:
@@ -41,7 +64,7 @@ def load_path_scope(env: Mapping[str, str] | None = None) -> tuple[str, ...] | N
     scope: list[str] = []
     for pattern in patterns:
         try:
-            normalized = _validate_relative_path(pattern)
+            normalized = _validate_scope_pattern(pattern)
         except EditorPathError as exc:
             raise EditorError(
                 "PATH_SCOPE_INVALID",
@@ -54,11 +77,14 @@ def load_path_scope(env: Mapping[str, str] | None = None) -> tuple[str, ...] | N
 
 def is_path_in_scope(relative_path: str, scope: Sequence[str]) -> bool:
     """True when a game-relative POSIX path matches at least one pattern."""
-    parts = relative_path.split("/")
-    return any(_match_parts(pattern.split("/"), parts) for pattern in scope)
+    path_parts = tuple(relative_path.split("/"))
+    return any(_match_parts(tuple(pattern.split("/")), path_parts) for pattern in scope)
 
 
-def _match_parts(pattern_parts: list[str], path_parts: list[str]) -> bool:
+# Matching ``**`` patterns recursively revisits the same pattern/path suffix
+# pairs; caching them keeps a pattern with many ``**`` segments polynomial.
+@lru_cache(maxsize=None)
+def _match_parts(pattern_parts: tuple[str, ...], path_parts: tuple[str, ...]) -> bool:
     if not pattern_parts:
         return not path_parts
     head = pattern_parts[0]

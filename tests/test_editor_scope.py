@@ -46,6 +46,35 @@ def test_load_path_scope_rejects_invalid_patterns(pattern: str) -> None:
     assert "RENFORGE_ALLOW_PATHS" in excinfo.value.message
 
 
+@pytest.mark.parametrize(
+    ("pattern", "reason"),
+    [
+        ("C:/game/screens.rpy", "PATH_DRIVE_LETTER_REJECTED"),
+        ("c:gui.rpy", "PATH_DRIVE_LETTER_REJECTED"),
+        ("C:", "PATH_DRIVE_LETTER_REJECTED"),
+        ("screens/", "PATH_TRAILING_SLASH_REJECTED"),
+        ("gui.rpy/", "PATH_TRAILING_SLASH_REJECTED"),
+        ("screens/**/", "PATH_TRAILING_SLASH_REJECTED"),
+    ],
+)
+def test_load_path_scope_rejects_windows_and_trailing_slash_patterns(
+    pattern: str, reason: str
+) -> None:
+    with pytest.raises(EditorError) as excinfo:
+        load_path_scope({ENV_ALLOW_PATHS: pattern})
+    error = excinfo.value
+    assert error.code == "PATH_SCOPE_INVALID"
+    assert error.details == {"pattern": pattern, "reason": reason}
+    assert pattern in error.message
+    assert "RENFORGE_ALLOW_PATHS" in error.message
+
+
+def test_scope_patterns_are_matched_case_sensitively() -> None:
+    assert is_path_in_scope("screens/say.rpy", ("screens/*.rpy",)) is True
+    assert is_path_in_scope("Screens/say.rpy", ("screens/*.rpy",)) is False
+    assert is_path_in_scope("screens/SAY.RPY", ("screens/*.rpy",)) is False
+
+
 def test_exact_pattern_matches_only_that_path() -> None:
     assert is_path_in_scope("gui.rpy", ("gui.rpy",)) is True
     assert is_path_in_scope("screens/gui.rpy", ("gui.rpy",)) is False
@@ -66,6 +95,15 @@ def test_double_star_crosses_directories_including_zero() -> None:
     assert is_path_in_scope("tl/say.rpy", scope) is False
     assert is_path_in_scope("script.rpy", ("**/*.rpy",)) is True
     assert is_path_in_scope("screens/tl/say.rpy", ("**/*.rpy",)) is True
+
+
+def test_many_double_star_segments_still_match_correctly() -> None:
+    scope = ("**/**/**/**/**/screens/**/**/**/**/*.rpy",)
+    assert is_path_in_scope("screens/say.rpy", scope) is True
+    assert is_path_in_scope("a/b/screens/c/d/say.rpy", scope) is True
+    assert is_path_in_scope("a/b/c/d/e/f/screens/g/h/i/say.rpy", scope) is True
+    assert is_path_in_scope("a/b/c/d/e/f/tl/say.rpy", scope) is False
+    assert is_path_in_scope("screens/tl/say/deep.txt", scope) is False
 
 
 def test_require_in_scope_unset_accepts_any_path(
