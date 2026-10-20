@@ -2606,7 +2606,9 @@ init python:
     # Only these node types can wrap a text displayable worth measuring.
     _RENFORGE_SCENE_OVERFLOW_TYPES = ("text", "button", "input")
     _RENFORGE_SCENE_OVERFLOW_SEARCH_DEPTH = 4
-    _RENFORGE_SCENE_OVERFLOW_BASIS = "text natural size vs widget maximum"
+    _RENFORGE_SCENE_OVERFLOW_BASIS = (
+        "unwrapped text width and rendered wrapped height vs effective pixel maximum"
+    )
     def _renforge_scene_string(value, max_chars):
         if value is None:
             return None
@@ -2803,16 +2805,16 @@ init python:
                 return subject
         return None
 
-    def _renforge_scene_natural_size(subject):
+    def _renforge_scene_text_size(subject, width, height):
         try:
             size_fn = getattr(subject, "size", None)
             if callable(size_fn):
-                measured = size_fn(1000000, 1000000, 0, 0)
+                measured = size_fn(width, height, 0, 0)
             else:
                 render_for_size = getattr(getattr(renpy.display, "render", None), "render_for_size", None)
                 if not callable(render_for_size):
                     return None, "no size or render API"
-                surf = render_for_size(subject, 1000000, 1000000, 0, 0)
+                surf = render_for_size(subject, width, height, 0, 0)
                 measured = (getattr(surf, "width", None), getattr(surf, "height", None))
             return {"width": int(measured[0]), "height": int(measured[1])}, None
         except Exception as exc:
@@ -2833,46 +2835,108 @@ init python:
         except Exception:
             return None
 
+    def _renforge_scene_style_value(style, attr_name):
+        if style is None:
+            return None
+        try:
+            return getattr(style, attr_name, None)
+        except Exception:
+            return None
+
+    def _renforge_scene_spacing(style, suffix):
+        # Padding and margins only narrow the inner box when declared in
+        # pixels; relative or unknown values are skipped rather than guessed.
+        spacing = {}
+        for side in ("left", "right", "top", "bottom"):
+            value = _renforge_scene_style_value(style, side + "_" + suffix)
+            if isinstance(value, int) and not isinstance(value, bool):
+                spacing[side] = value
+        return spacing
+
+    def _renforge_scene_overflow_unavailable(reason, natural=None, constraints=None):
+        verdict = {
+            "available": False,
+            "reason": reason,
+            "overflow": None,
+            "overflow_px": None,
+        }
+        if natural is not None:
+            verdict["natural"] = natural
+        if constraints is not None:
+            verdict["constraints"] = constraints
+        return verdict
+
     def _renforge_scene_overflow(d):
         subject = _renforge_scene_text_subject(d)
         if subject is None:
-            return {"available": False, "reason": "no text subject"}
-        natural, error = _renforge_scene_natural_size(subject)
+            return _renforge_scene_overflow_unavailable("no text subject")
+        subject_style = getattr(subject, "style", None)
+        if _renforge_scene_style_value(subject_style, "vertical") is True:
+            # Text.size lays vertical text out horizontally, so a verdict
+            # built from it would report the overflow on the wrong axis.
+            return _renforge_scene_overflow_unavailable("vertical text is not measured")
+        host_style = getattr(d, "style", None)
+        host_is_subject = d is subject
+        natural, error = _renforge_scene_text_size(subject, 1000000, 1000000)
         if natural is None:
-            return {"available": False, "reason": error}
-        style = getattr(d, "style", None)
+            return _renforge_scene_overflow_unavailable(error)
         constraints = {}
-        ceilings = {}
+        pixel_maxima = {}
+        maximum_source = {}
         for axis, attr_name in (("x", "xmaximum"), ("y", "ymaximum")):
-            try:
-                value = getattr(style, attr_name, None) if style is not None else None
-            except Exception:
-                value = None
-            constraints[attr_name] = _renforge_scene_constraint_value(value)
-            ceiling = _renforge_scene_pixel_maximum(value)
-            if ceiling is not None:
-                ceilings[axis] = ceiling
-        if not ceilings:
-            return {
-                "available": False,
-                "reason": "no absolute maximum declared",
-                "natural": natural,
-                "constraints": constraints,
-            }
-        axes = {}
-        for axis, natural_key in (("x", "width"), ("y", "height")):
-            ceiling = ceilings.get(axis)
+            host_value = _renforge_scene_style_value(host_style, attr_name)
+            subject_value = _renforge_scene_style_value(subject_style, attr_name)
+            constraints["host_" + attr_name] = _renforge_scene_constraint_value(host_value)
+            constraints["subject_" + attr_name] = _renforge_scene_constraint_value(subject_value)
+            ceiling = _renforge_scene_pixel_maximum(host_value)
+            source = "host" if ceiling is not None else None
             if ceiling is None:
-                axes[axis] = None
-            else:
-                axes[axis] = max(0, natural[natural_key] - ceiling)
+                ceiling = _renforge_scene_pixel_maximum(subject_value)
+                source = "subject" if ceiling is not None else None
+            pixel_maxima[axis] = ceiling
+            maximum_source[axis] = source
+        padding = _renforge_scene_spacing(host_style, "padding")
+        margin = _renforge_scene_spacing(host_style, "margin")
+        effective = {}
+        for axis, sides in (("x", ("left", "right")), ("y", ("top", "bottom"))):
+            ceiling = pixel_maxima[axis]
+            if ceiling is None:
+                effective[axis] = None
+                continue
+            inner = ceiling
+            if not host_is_subject:
+                for side in sides:
+                    inner -= padding.get(side, 0) + margin.get(side, 0)
+            effective[axis] = max(0, inner)
+        constraints["effective_xmaximum"] = effective["x"]
+        constraints["effective_ymaximum"] = effective["y"]
+        constraints["maximum_source"] = maximum_source
+        if not host_is_subject:
+            constraints["padding"] = padding
+            constraints["margin"] = margin
+        if effective["x"] is None and effective["y"] is None:
+            return _renforge_scene_overflow_unavailable(
+                "no absolute maximum declared", natural, constraints
+            )
+        rendered = natural
+        if effective["x"] is not None:
+            rendered, error = _renforge_scene_text_size(subject, effective["x"], 1000000)
+            if rendered is None:
+                return _renforge_scene_overflow_unavailable(error, natural, constraints)
+        axes = {"x": None, "y": None}
+        if effective["x"] is not None:
+            axes["x"] = max(0, natural["width"] - effective["x"])
+        if effective["y"] is not None:
+            axes["y"] = max(0, rendered["height"] - effective["y"])
         measured = [value for value in axes.values() if value is not None]
         return {
             "available": True,
             "overflow": any(value > 0 for value in measured),
             "overflow_axes": axes,
             "overflow_px": max(measured) if measured else 0,
+            "wrapped": {"x": (axes["x"] or 0) > 0, "y": (axes["y"] or 0) > 0},
             "natural": natural,
+            "rendered": rendered,
             "constraints": constraints,
             "basis": _RENFORGE_SCENE_OVERFLOW_BASIS,
         }

@@ -91,6 +91,20 @@ class _FakeTextDisplayable:
         return self._natural
 
 
+class _FakeWrappingTextDisplayable:
+    """Text stand-in that grows taller when wrapped to a constrained width."""
+
+    def __init__(self, width, height, wrapped_width, wrapped_height, **style):
+        self._natural = (width, height)
+        self._wrapped = (wrapped_width, wrapped_height)
+        self.style = types.SimpleNamespace(**style)
+
+    def size(self, width, height, st, at):
+        if width < self._natural[0]:
+            return self._wrapped
+        return self._natural
+
+
 class _FakeTextButtonDisplayable:
     """Minimal Window-style control that wraps a text child."""
 
@@ -4117,9 +4131,21 @@ def test_scene_overflow_compares_text_size_to_int_maximum(running_bridge):
     assert overflow["overflow"] is True
     assert overflow["overflow_axes"] == {"x": 100, "y": None}
     assert overflow["overflow_px"] == 100
+    assert overflow["wrapped"] == {"x": True, "y": False}
     assert overflow["natural"] == {"width": 300, "height": 40}
-    assert overflow["constraints"] == {"xmaximum": 200, "ymaximum": None}
-    assert overflow["basis"] == "text natural size vs widget maximum"
+    assert overflow["rendered"] == {"width": 300, "height": 40}
+    assert overflow["constraints"] == {
+        "host_xmaximum": 200,
+        "subject_xmaximum": 200,
+        "host_ymaximum": None,
+        "subject_ymaximum": None,
+        "effective_xmaximum": 200,
+        "effective_ymaximum": None,
+        "maximum_source": {"x": "host", "y": None},
+    }
+    assert overflow["basis"] == (
+        "unwrapped text width and rendered wrapped height vs effective pixel maximum"
+    )
 
 
 def test_scene_overflow_reports_unset_maximum(running_bridge):
@@ -4130,8 +4156,18 @@ def test_scene_overflow_reports_unset_maximum(running_bridge):
     assert overflow == {
         "available": False,
         "reason": "no absolute maximum declared",
+        "overflow": None,
+        "overflow_px": None,
         "natural": {"width": 300, "height": 40},
-        "constraints": {"xmaximum": None, "ymaximum": None},
+        "constraints": {
+            "host_xmaximum": None,
+            "subject_xmaximum": None,
+            "host_ymaximum": None,
+            "subject_ymaximum": None,
+            "effective_xmaximum": None,
+            "effective_ymaximum": None,
+            "maximum_source": {"x": None, "y": None},
+        },
     }
 
 
@@ -4142,13 +4178,37 @@ def test_scene_overflow_does_not_treat_float_maximum_as_pixels(running_bridge):
     assert partial["available"] is True
     assert partial["overflow_axes"] == {"x": None, "y": 0}
     assert partial["overflow"] is False
-    assert partial["constraints"] == {"xmaximum": 0.5, "ymaximum": 40}
+    assert partial["wrapped"] == {"x": False, "y": False}
+    assert partial["constraints"] == {
+        "host_xmaximum": 0.5,
+        "subject_xmaximum": 0.5,
+        "host_ymaximum": 40,
+        "subject_ymaximum": 40,
+        "effective_xmaximum": None,
+        "effective_ymaximum": 40,
+        "maximum_source": {"x": None, "y": "host"},
+    }
 
     float_only = overflow_fn(_FakeTextDisplayable(300, 40, xmaximum=0.5, ymaximum=0.5))
     assert float_only["available"] is False
     assert float_only["reason"] == "no absolute maximum declared"
+    assert float_only["overflow"] is None
+    assert float_only["overflow_px"] is None
     assert float_only["natural"] == {"width": 300, "height": 40}
-    assert float_only["constraints"] == {"xmaximum": 0.5, "ymaximum": 0.5}
+    assert float_only["constraints"]["host_xmaximum"] == 0.5
+    assert float_only["constraints"]["host_ymaximum"] == 0.5
+    assert float_only["constraints"]["effective_xmaximum"] is None
+    assert float_only["constraints"]["effective_ymaximum"] is None
+
+    # A relative widget maximum does not shadow the child text's pixel maximum.
+    relative_host = overflow_fn(
+        _FakeTextButtonDisplayable(
+            _FakeTextDisplayable(300, 40, xmaximum=200), xmaximum=0.5
+        )
+    )
+    assert relative_host["constraints"]["host_xmaximum"] == 0.5
+    assert relative_host["constraints"]["effective_xmaximum"] == 200
+    assert relative_host["constraints"]["maximum_source"] == {"x": "subject", "y": None}
 
 
 def test_scene_overflow_reads_button_child_text(running_bridge):
@@ -4161,7 +4221,98 @@ def test_scene_overflow_reads_button_child_text(running_bridge):
     assert overflow["overflow_axes"] == {"x": 80, "y": 0}
     assert overflow["overflow_px"] == 80
     assert overflow["natural"] == {"width": 280, "height": 20}
-    assert overflow["constraints"] == {"xmaximum": 200, "ymaximum": 100}
+    assert overflow["constraints"] == {
+        "host_xmaximum": 200,
+        "subject_xmaximum": None,
+        "host_ymaximum": 100,
+        "subject_ymaximum": None,
+        "effective_xmaximum": 200,
+        "effective_ymaximum": 100,
+        "maximum_source": {"x": "host", "y": "host"},
+        "padding": {},
+        "margin": {},
+    }
+
+
+def test_scene_overflow_measures_wrapped_height_against_inner_box(running_bridge):
+    # A caption wider than the button wraps; the wrapped height must be
+    # compared with the button maximum instead of the unwrapped height.
+    text = _FakeWrappingTextDisplayable(320, 20, 200, 160)
+    button = _FakeTextButtonDisplayable(text, xmaximum=200, ymaximum=100)
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["available"] is True
+    assert overflow["natural"] == {"width": 320, "height": 20}
+    assert overflow["rendered"] == {"width": 200, "height": 160}
+    assert overflow["overflow_axes"] == {"x": 120, "y": 60}
+    assert overflow["overflow_px"] == 120
+    assert overflow["overflow"] is True
+    assert overflow["wrapped"] == {"x": True, "y": True}
+
+
+def test_scene_overflow_subtracts_integer_button_padding(running_bridge):
+    text = _FakeTextDisplayable(280, 20)
+    button = _FakeTextButtonDisplayable(
+        text, xmaximum=300, left_padding=20, right_padding=20, left_margin=0.5
+    )
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["overflow_axes"] == {"x": 20, "y": None}
+    assert overflow["overflow_px"] == 20
+    assert overflow["constraints"]["effective_xmaximum"] == 260
+    assert overflow["constraints"]["padding"] == {"left": 20, "right": 20}
+    # A non-integer margin is recorded nowhere and never subtracted.
+    assert overflow["constraints"]["margin"] == {}
+
+
+def test_scene_overflow_subtracts_integer_button_margins(running_bridge):
+    text = _FakeTextDisplayable(280, 20)
+    button = _FakeTextButtonDisplayable(
+        text, xmaximum=300, left_margin=15, right_margin=15
+    )
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["overflow_axes"] == {"x": 10, "y": None}
+    assert overflow["constraints"]["effective_xmaximum"] == 270
+    assert overflow["constraints"]["margin"] == {"left": 15, "right": 15}
+    assert overflow["constraints"]["padding"] == {}
+
+
+def test_scene_overflow_uses_child_text_maximum_when_host_has_none(running_bridge):
+    text = _FakeTextDisplayable(300, 40, xmaximum=200)
+    button = _FakeTextButtonDisplayable(text)
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["available"] is True
+    assert overflow["overflow_axes"] == {"x": 100, "y": None}
+    assert overflow["constraints"]["host_xmaximum"] is None
+    assert overflow["constraints"]["subject_xmaximum"] == 200
+    assert overflow["constraints"]["effective_xmaximum"] == 200
+    assert overflow["constraints"]["maximum_source"] == {"x": "subject", "y": None}
+
+
+def test_scene_overflow_unavailable_keeps_null_legacy_keys(running_bridge):
+    overflow = running_bridge.globs["_renforge_scene_overflow"](object())
+
+    assert overflow == {
+        "available": False,
+        "reason": "no text subject",
+        "overflow": None,
+        "overflow_px": None,
+    }
+
+
+def test_scene_overflow_does_not_measure_vertical_text(running_bridge):
+    overflow = running_bridge.globs["_renforge_scene_overflow"](
+        _FakeTextDisplayable(300, 40, xmaximum=200, vertical=True)
+    )
+
+    assert overflow == {
+        "available": False,
+        "reason": "vertical text is not measured",
+        "overflow": None,
+        "overflow_px": None,
+    }
 
 
 def test_scene_finalize_attaches_overflow_to_text_button_and_input(running_bridge):
@@ -4179,7 +4330,12 @@ def test_scene_finalize_attaches_overflow_to_text_button_and_input(running_bridg
     assert nodes[0]["overflow"]["overflow_axes"] == {"x": 50, "y": None}
     assert nodes[1]["overflow"]["available"] is True
     assert nodes[1]["overflow"]["overflow_axes"] == {"x": 80, "y": None}
-    assert nodes[2]["overflow"] == {"available": False, "reason": "no text subject"}
+    assert nodes[2]["overflow"] == {
+        "available": False,
+        "reason": "no text subject",
+        "overflow": None,
+        "overflow_px": None,
+    }
     assert "overflow" not in nodes[3]
     assert all("_d" not in node for node in nodes)
 
