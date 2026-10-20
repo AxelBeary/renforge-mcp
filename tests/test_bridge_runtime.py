@@ -4291,6 +4291,48 @@ def test_scene_overflow_uses_child_text_maximum_when_host_has_none(running_bridg
     assert overflow["constraints"]["maximum_source"] == {"x": "subject", "y": None}
 
 
+def test_scene_overflow_takes_tighter_of_host_and_subject_maximums(running_bridge):
+    # Ren'Py applies the host box maximum and the child Text maximum together,
+    # so the effective ceiling is the tighter of the two, not the host one.
+    text = _FakeTextDisplayable(280, 20, xmaximum=120)
+    button = _FakeTextButtonDisplayable(text, xmaximum=300)
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["available"] is True
+    assert overflow["overflow"] is True
+    assert overflow["overflow_axes"] == {"x": 160, "y": None}
+    assert overflow["overflow_px"] == 160
+    assert overflow["constraints"]["host_xmaximum"] == 300
+    assert overflow["constraints"]["subject_xmaximum"] == 120
+    assert overflow["constraints"]["effective_xmaximum"] == 120
+    assert overflow["constraints"]["maximum_source"] == {"x": "both", "y": None}
+
+
+def test_scene_overflow_keeps_host_maximum_when_it_is_tighter(running_bridge):
+    text = _FakeTextDisplayable(280, 20, xmaximum=460)
+    button = _FakeTextButtonDisplayable(text, xmaximum=300)
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["overflow_axes"] == {"x": 0, "y": None}
+    assert overflow["constraints"]["effective_xmaximum"] == 300
+    assert overflow["constraints"]["maximum_source"] == {"x": "both", "y": None}
+
+
+def test_scene_overflow_host_is_subject_uses_its_own_maximum_once(running_bridge):
+    # A Text node hosts itself: its maximum applies once and its own padding
+    # must never narrow it a second time.
+    text = _FakeTextDisplayable(280, 40, xmaximum=200, left_padding=20, right_padding=20)
+    overflow = running_bridge.globs["_renforge_scene_overflow"](text)
+
+    assert overflow["available"] is True
+    assert overflow["overflow_axes"] == {"x": 80, "y": None}
+    assert overflow["constraints"]["host_xmaximum"] == 200
+    assert overflow["constraints"]["subject_xmaximum"] == 200
+    assert overflow["constraints"]["effective_xmaximum"] == 200
+    assert overflow["constraints"]["maximum_source"] == {"x": "host", "y": None}
+    assert "padding" not in overflow["constraints"]
+
+
 def test_scene_overflow_unavailable_keeps_null_legacy_keys(running_bridge):
     overflow = running_bridge.globs["_renforge_scene_overflow"](object())
 

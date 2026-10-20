@@ -2881,33 +2881,47 @@ init python:
         if natural is None:
             return _renforge_scene_overflow_unavailable(error)
         constraints = {}
-        pixel_maxima = {}
         maximum_source = {}
-        for axis, attr_name in (("x", "xmaximum"), ("y", "ymaximum")):
+        padding = _renforge_scene_spacing(host_style, "padding")
+        margin = _renforge_scene_spacing(host_style, "margin")
+        effective = {}
+        for axis, attr_name, sides in (
+            ("x", "xmaximum", ("left", "right")),
+            ("y", "ymaximum", ("top", "bottom")),
+        ):
             host_value = _renforge_scene_style_value(host_style, attr_name)
             subject_value = _renforge_scene_style_value(subject_style, attr_name)
             constraints["host_" + attr_name] = _renforge_scene_constraint_value(host_value)
             constraints["subject_" + attr_name] = _renforge_scene_constraint_value(subject_value)
-            ceiling = _renforge_scene_pixel_maximum(host_value)
-            source = "host" if ceiling is not None else None
-            if ceiling is None:
-                ceiling = _renforge_scene_pixel_maximum(subject_value)
-                source = "subject" if ceiling is not None else None
-            pixel_maxima[axis] = ceiling
-            maximum_source[axis] = source
-        padding = _renforge_scene_spacing(host_style, "padding")
-        margin = _renforge_scene_spacing(host_style, "margin")
-        effective = {}
-        for axis, sides in (("x", ("left", "right")), ("y", ("top", "bottom"))):
-            ceiling = pixel_maxima[axis]
-            if ceiling is None:
-                effective[axis] = None
-                continue
-            inner = ceiling
-            if not host_is_subject:
+            host_ceiling = _renforge_scene_pixel_maximum(host_value)
+            if host_ceiling is not None and not host_is_subject:
+                # Only the host box carries padding and margins, and they
+                # narrow its inner box. The subject text maximum is already
+                # expressed in the text's own layout, so it is used as written.
                 for side in sides:
-                    inner -= padding.get(side, 0) + margin.get(side, 0)
-            effective[axis] = max(0, inner)
+                    host_ceiling -= padding.get(side, 0) + margin.get(side, 0)
+                host_ceiling = max(0, host_ceiling)
+            # Ren'Py applies the host and the subject maximums together, so the
+            # effective ceiling is the tighter of the two. When the host is the
+            # subject both readings collapse into one and the same constraint.
+            candidates = []
+            if host_ceiling is not None:
+                candidates.append(("host", host_ceiling))
+            if not host_is_subject:
+                subject_ceiling = _renforge_scene_pixel_maximum(subject_value)
+                if subject_ceiling is not None:
+                    candidates.append(("subject", subject_ceiling))
+            ceiling = None
+            for _, candidate in candidates:
+                ceiling = candidate if ceiling is None else min(ceiling, candidate)
+            if not candidates:
+                source = None
+            elif len(candidates) == 1:
+                source = candidates[0][0]
+            else:
+                source = "both"
+            effective[axis] = ceiling
+            maximum_source[axis] = source
         constraints["effective_xmaximum"] = effective["x"]
         constraints["effective_ymaximum"] = effective["y"]
         constraints["maximum_source"] = maximum_source
