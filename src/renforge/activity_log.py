@@ -198,7 +198,9 @@ def log_tool_call(
     compact_deleted = [_bound_text(item) for item in full_deleted[:_MAX_FILES_TOUCHED]]
     # More than 32 paths cannot live in the compact UI field, so the full list
     # has to be preserved elsewhere even when the entry itself still fits.
-    truncated = len(full_touched) > len(compact_touched)
+    truncated = len(full_touched) > len(compact_touched) or len(full_deleted) > len(
+        compact_deleted
+    )
 
     root = _coerce_project_root(project_root)
     if not root.exists() or not root.is_dir():

@@ -120,6 +120,26 @@ def test_activity_log_overflow_spills_full_path_list_to_private_sidecar(
     assert sidecar["files_touched"] == paths
 
 
+def test_activity_log_spills_an_oversized_deleted_list_too(tmp_path: Path) -> None:
+    deleted = [f"game/deleted_{index}.rpy" for index in range(40)]
+
+    log_tool_call(
+        tmp_path,
+        "renforge_stop",
+        {"project_path": str(tmp_path)},
+        1.0,
+        {"ok": True, "files_touched": [], "files_deleted": deleted},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched_truncated"] is True
+    assert len(entry["files_deleted"]) == 32
+    sidecar = json.loads(
+        (tmp_path / entry["files_touched_file"]).read_text(encoding="utf-8")
+    )
+    assert sidecar["files_deleted"] == deleted
+
+
 def test_activity_log_sidecar_is_only_written_when_the_list_is_truncated(
     tmp_path: Path,
 ) -> None:
