@@ -31,6 +31,7 @@ def build_wrappers(context):
         persistent: str = "existing",
         cleanup_on_stop: bool = True,
         timeout: float | None = None,
+        language: str | None = None,
         session: dict[str, Any] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> dict:
@@ -63,6 +64,7 @@ def build_wrappers(context):
             persistent=effective_persistent,
             cleanup_on_stop=bool(effective_cleanup),
             timeout=timeout,
+            language=language,
         )
         if delegated is not None:
             if cancel_event is not None and cancel_event.is_set():
@@ -109,6 +111,7 @@ def build_wrappers(context):
             persistent=effective_persistent,
             cleanup_on_stop=bool(effective_cleanup),
             timeout=timeout,
+            language=language,
             session=session,
             cancel_event=cancel_event,
         )
@@ -140,7 +143,12 @@ def build_wrappers(context):
                 **kwargs,
             )
 
-        return live.start_launch(project_path, _launch, editor=requested_editor)
+        return live.start_launch(
+            project_path,
+            _launch,
+            editor=requested_editor,
+            language=kwargs.get("language"),
+        )
 
 
     def renforge_launch(
@@ -154,6 +162,7 @@ def build_wrappers(context):
         persistent: str = "existing",
         cleanup_on_stop: bool = True,
         timeout: float = 0,
+        language: str | None = None,
     ) -> dict:
         """Launch or reuse a game with the Live Editor enabled by default.
 
@@ -170,6 +179,9 @@ def build_wrappers(context):
         ``renforge_launch_status`` until it reports ``ready`` or ``failed``.
         display/audio default to auto; savedir='temporary' isolates saves.
         timeout controls the background startup deadline, not the MCP call.
+        ``language`` sets ``RENPY_LANGUAGE`` for a fresh game process and
+        overrides the player's stored language preference for that session; it
+        cannot change an already-running session.
         """
         kwargs: dict[str, Any] = {
             "version": version,
@@ -184,6 +196,8 @@ def build_wrappers(context):
             kwargs["savedir"] = savedir
         if timeout and timeout > 0:
             kwargs["timeout"] = float(timeout)
+        if language is not None:
+            kwargs["language"] = language
         return _log_tool_call(
             name="renforge_launch",
             params={
@@ -197,6 +211,7 @@ def build_wrappers(context):
                 "persistent": persistent,
                 "cleanup_on_stop": cleanup_on_stop,
                 "timeout": timeout,
+                "language": language,
             },
             project_root=project_path,
             fn=_start_launch,

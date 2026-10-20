@@ -175,6 +175,12 @@ renforge_stop(project_path)
 Live Editor human and agent detail (editable vs locked, Save vs preview,
 source safety): **[LIVE_EDITOR.md](LIVE_EDITOR.md)**.
 
+`renforge_launch(language="schinese")` sets `RENPY_LANGUAGE` for a fresh game
+process. It overrides the player's stored language preference for that session
+only, is intended for verification, and cannot change an already-running
+session. Launch results echo `requested_language`, plus `active_language` read
+from the bridge when the session is ready.
+
 After editing a running project's `.rpy` file, hot-reload it and inspect the
 result without restarting the game process:
 
@@ -383,7 +389,7 @@ guards: each capture hashes a new frame.
 
 | Tool | Purpose |
 | --- | --- |
-| `renforge_launch` | Start or reuse a game with the **Live Editor enabled by default** and inject the temporary bridge. After launch, poll `renforge_launch_status`, observe with `renforge_screenshot` / `renforge_scene_tree`, then use guarded clicks — see [LIVE_EDITOR.md](LIVE_EDITOR.md). The call waits at most 20 seconds, then returns `status=starting` while startup continues in the background. A competing launch returns `code=LAUNCH_IN_PROGRESS` instead of discarding its parameters. `warp` accepts `file:line`; `display`/`audio` default to `auto`; `savedir=temporary` isolates saves. `timeout` controls the background startup deadline. |
+| `renforge_launch` | Start or reuse a game with the **Live Editor enabled by default** and inject the temporary bridge. After launch, poll `renforge_launch_status`, observe with `renforge_screenshot` / `renforge_scene_tree`, then use guarded clicks — see [LIVE_EDITOR.md](LIVE_EDITOR.md). The call waits at most 20 seconds, then returns `status=starting` while startup continues in the background. A competing launch returns `code=LAUNCH_IN_PROGRESS` instead of discarding its parameters. `warp` accepts `file:line`; `display`/`audio` default to `auto`; `savedir=temporary` isolates saves; `language` sets `RENPY_LANGUAGE` for a fresh game process (verification-scoped, overrides the stored preference for that session, cannot change a running session). `timeout` controls the background startup deadline. |
 | `renforge_launch_status` | Report `starting`, `ready`, `failed`, or `idle` for the latest launch. While cancellation is pending it keeps `status=starting` and sets `cancel_requested=true`. |
 | `renforge_jump` | Restart at a label or `file:line`; it uses the same non-blocking launch lifecycle. |
 | `renforge_new_game` | Start a fresh process at the `start` label through the same non-blocking lifecycle. |

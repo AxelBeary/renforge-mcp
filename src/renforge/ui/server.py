@@ -654,6 +654,7 @@ def create_ui_app(project_root: Path, ui_token: str, dashboard_url: str | None =
             project_path,
             _worker,
             editor=bool(launch_kwargs.get("editor", True)),
+            language=launch_kwargs.get("language"),
         )
 
     async def warp(request: Request):
@@ -723,6 +724,7 @@ def create_ui_app(project_root: Path, ui_token: str, dashboard_url: str | None =
         persistent = payload.get("persistent", "existing")
         cleanup_on_stop = payload.get("cleanup_on_stop", True)
         timeout = payload.get("timeout")
+        language = payload.get("language")
         if not isinstance(version, str) or not version:
             return error_response(
                 code="launch_version_invalid",
@@ -786,6 +788,13 @@ def create_ui_app(project_root: Path, ui_token: str, dashboard_url: str | None =
                 status_code=400,
                 details={"timeout": timeout},
             )
+        if language is not None and not isinstance(language, str):
+            return error_response(
+                code="launch_language_invalid",
+                error="language must be a string",
+                status_code=400,
+                details={"language": language},
+            )
         result = await asyncio.to_thread(
             _start_live_launch,
             version=version,
@@ -797,6 +806,7 @@ def create_ui_app(project_root: Path, ui_token: str, dashboard_url: str | None =
             persistent=persistent,
             cleanup_on_stop=cleanup_on_stop,
             timeout=float(timeout) if timeout is not None else None,
+            language=language,
         )
         return JSONResponse(result)
 

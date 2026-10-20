@@ -1394,6 +1394,19 @@
           "description": "Enable/disable live editor injection; default True for interactive work.",
           "type": "boolean"
         },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional Ren'Py language code set as `RENPY_LANGUAGE` for a fresh game process. It overrides the player's stored language preference for that session only, is intended for verification, and cannot change an already-running session.",
+          "maxLength": 64
+        },
         "persistent": {
           "default": "existing",
           "description": "Persistent mode: `existing` preserves current persistent data and `empty` removes it in the isolated session; `copy` and `fixture` currently set an environment marker only and do not copy or load fixture data.",

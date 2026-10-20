@@ -758,6 +758,32 @@ def _raise_bridge_startup_error(code: str) -> None:
     )
 
 
+def normalize_language(language: str | None) -> str | None:
+    """Validate the optional ``RENPY_LANGUAGE`` override for the game process."""
+    if language is None:
+        return None
+    if not isinstance(language, str):
+        raise LaunchError(
+            "LANGUAGE_INVALID",
+            "language must be a non-empty string.",
+            phase="detecting_environment",
+            suggested_fix="Pass a Ren'Py language code such as `japanese`, or omit the parameter.",
+        )
+    value = language.strip()
+    if (
+        not value
+        or len(value) > 64
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+    ):
+        raise LaunchError(
+            "LANGUAGE_INVALID",
+            "language must be 1-64 printable characters.",
+            phase="detecting_environment",
+            suggested_fix="Pass a Ren'Py language code such as `japanese`, or omit the parameter.",
+        )
+    return value
+
+
 def _launch_after_project_lock(
     sdk: RenpySdk,
     project: RenpyProject,
@@ -777,6 +803,7 @@ def _launch_after_project_lock(
     preferences: str = "existing",
     editor_endpoint: EditorEndpoint | None = None,
     editor_coordinator: EditorCoordinator | None = None,
+    language: str | None = None,
 ) -> BridgeSession:
     """Start ``project`` with the bridge and return a connected session.
 
@@ -786,7 +813,11 @@ def _launch_after_project_lock(
 
     ``savedir='temporary'`` isolates saves under a temp directory that is
     removed on session close when ``cleanup_on_stop`` is true.
+
+    ``language`` sets ``RENPY_LANGUAGE`` for this process, overriding the
+    player's stored language preference for the session.
     """
+    language = normalize_language(language)
     started = time.monotonic()
     phases: list[dict[str, Any]] = []
     _raise_if_cancelled(cancel_event, phase="detecting_environment")
@@ -798,6 +829,8 @@ def _launch_after_project_lock(
     _phase("detecting_environment")
     env = dict(os.environ)
     env.update(extra_env or {})
+    if language is not None:
+        env["RENPY_LANGUAGE"] = language
     capabilities = detect_environment(env)
 
     try:
@@ -1107,8 +1140,10 @@ def launch_with_bridge(
     cleanup_on_stop: bool = True,
     preferences: str = "existing",
     editor: bool = False,
+    language: str | None = None,
 ) -> BridgeSession:
     """Launch a bridge while exclusively owning this project's artifacts."""
+    language = normalize_language(language)
     project_lock = ProjectBridgeLock(project.root)
     project_lock.acquire()
     editor_coordinator: EditorCoordinator | None = None
@@ -1137,6 +1172,7 @@ def launch_with_bridge(
             preferences=preferences,
             editor_endpoint=editor_endpoint,
             editor_coordinator=editor_coordinator,
+            language=language,
         )
         return session
     except BaseException:
@@ -1256,5 +1292,6 @@ __all__ = [
     "BridgeSession",
     "ProjectBridgeLock",
     "launch_with_bridge",
+    "normalize_language",
     "remove_bridge_artifacts",
 ]

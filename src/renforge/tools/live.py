@@ -27,6 +27,7 @@ from ..bridge.client import BridgeClient, BridgeError
 from ..bridge.launcher import (
     BridgeSession,
     launch_with_bridge,
+    normalize_language,
 )
 from ..captures import validate_capture_name, write_project_capture
 from ..effect_wait import expected_events_for_action
@@ -58,10 +59,17 @@ class _LaunchTask:
     ``closed``. Cancellation is ``failed`` with ``LAUNCH_CANCELLED``.
     """
 
-    def __init__(self, project_root: Path, *, requested_editor: bool = True) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        *,
+        requested_editor: bool = True,
+        requested_language: str | None = None,
+    ) -> None:
         self.project_root = Path(project_root)
         self.started = time.monotonic()
         self.requested_editor = requested_editor
+        self.requested_language = requested_language
         self.finished: float | None = None
         self.cancel_event = threading.Event()
         self.done_event = threading.Event()
@@ -173,6 +181,7 @@ def _run_launch(
             task.lifecycle = "failed"
             return
         task.result.setdefault("editor", editor)
+        task.result.setdefault("requested_language", task.requested_language)
         if task.cancel_event.is_set() and not task.result.get("ok"):
             task.result.setdefault("code", "LAUNCH_CANCELLED")
             task.lifecycle = "failed"
@@ -219,6 +228,7 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
             "ok": True,
             "ready": False,
             "editor": task.requested_editor,
+            "requested_language": task.requested_language,
             "status": "starting",
             "phase": "waiting_for_bridge",
             "lifecycle": task.lifecycle,
@@ -239,6 +249,7 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
             "status": task.lifecycle,
             "lifecycle": task.lifecycle,
             "editor": task.requested_editor,
+            "requested_language": task.requested_language,
             "elapsed_ms": elapsed_ms,
             "cleanup": cleanup,
             "message": "Owned session is closing." if task.lifecycle == "closing" else "Owned session closed.",
@@ -256,6 +267,7 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
                 "status": "closing",
                 "lifecycle": "closing",
                 "editor": bool(getattr(session, "editor", task.requested_editor)),
+                "requested_language": task.requested_language,
                 "elapsed_ms": elapsed_ms,
                 "message": "Owned process exited; waiting for owner cleanup.",
             }
@@ -267,6 +279,8 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
                 "status": "ready",
                 "lifecycle": "ready",
                 "current_label": state.get("current_label"),
+                "requested_language": task.requested_language,
+                "active_language": state.get("language"),
                 "editor": bool(getattr(session, "editor", task.requested_editor)),
                 "elapsed_ms": elapsed_ms,
             }
@@ -282,6 +296,7 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
                 "status": "closing",
                 "lifecycle": "closing",
                 "editor": bool(getattr(session, "editor", task.requested_editor)),
+                "requested_language": task.requested_language,
                 "elapsed_ms": elapsed_ms,
                 "message": "Owned bridge became unreachable; owner cleanup started.",
             }
@@ -296,6 +311,9 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
     result["status"] = "ready" if is_ready else "failed"
     result["lifecycle"] = task.lifecycle
     result.setdefault("editor", task.requested_editor)
+    result.setdefault("requested_language", task.requested_language)
+    if is_ready:
+        result.setdefault("active_language", None)
     result["elapsed_ms"] = elapsed_ms
     return result
 
@@ -306,7 +324,12 @@ def start_launch(
     *,
     wait_timeout: float = _LAUNCH_RESPONSE_WAIT_SECONDS,
     editor: bool = True,
+    language: str | None = None,
 ) -> dict[str, Any]:
+    try:
+        language = normalize_language(language)
+    except LaunchError as exc:
+        return {**exc.to_dict(), "ready": False}
     project = RenpyProject(Path(project_path))
     key = _key(project.root)
     should_start = False
@@ -314,7 +337,11 @@ def start_launch(
         _prune_launches(time.monotonic())
         task = _LAUNCHES.get(key)
         if task is None or task.done_event.is_set():
-            task = _LaunchTask(project.root, requested_editor=editor)
+            task = _LaunchTask(
+                project.root,
+                requested_editor=editor,
+                requested_language=language,
+            )
             _LAUNCHES[key] = task
             should_start = True
 
@@ -326,6 +353,9 @@ def start_launch(
             message="A launch is already starting; poll status or stop it first.",
             error="A launch is already starting; poll status or stop it first.",
         )
+        if language is not None and task.requested_language != language:
+            result["requested_language"] = language
+            result["language_applied"] = False
         return result
 
     threading.Thread(
@@ -358,6 +388,7 @@ def launch_status(project_path: str) -> dict[str, Any]:
                     "ready": True,
                     "status": "ready",
                     "current_label": state.get("current_label"),
+                    "active_language": state.get("language"),
                     "editor": bool(getattr(session, "editor", False)),
                 }
             except Exception:
@@ -378,6 +409,7 @@ def launch_status(project_path: str) -> dict[str, Any]:
         "status": "ready",
         "external": True,
         "current_label": state.get("current_label"),
+        "active_language": state.get("language"),
         "editor": False,
     }
 
@@ -439,13 +471,20 @@ def launch_game(
     timeout: float | None = None,
     session: dict[str, Any] | None = None,
     cancel_event: threading.Event | None = None,
+    language: str | None = None,
 ) -> dict:
     """Launch the project with the bridge injected, or reuse a live session.
 
     ``display`` / ``audio`` default to ``auto`` (native when available, else
     Xvfb + dummy SDL audio). Pass a ``session`` object or individual kwargs to
-    isolate saves (``savedir='temporary'``) and persistent state.
+    isolate saves (``savedir='temporary'``) and persistent state. ``language``
+    sets ``RENPY_LANGUAGE`` for a fresh process only; it cannot change a
+    session that is already running.
     """
+    try:
+        language = normalize_language(language)
+    except LaunchError as exc:
+        return exc.to_dict()
     try:
         project = RenpyProject(Path(project_path))
     except Exception as exc:
@@ -484,13 +523,22 @@ def launch_game(
         if warp is None and existing.process.poll() is None:
             try:
                 state = existing.client.get_state()
-                return {
+                result = {
                     "ok": True,
                     "already_running": True,
                     "ready": True,
                     "current_label": state.get("current_label"),
                     "editor": existing_editor,
+                    "requested_language": language,
+                    "active_language": state.get("language"),
                 }
+                if language is not None:
+                    result["language_applied"] = False
+                    result["message"] = (
+                        "The requested language cannot be applied to the already-running session. "
+                        "Stop it and launch again to change language."
+                    )
+                return result
             except Exception:
                 pass  # unreachable session; fall through and relaunch
         try:
@@ -542,6 +590,19 @@ def launch_game(
                 "ready": True,
                 "current_label": state.get("current_label"),
                 "editor": False,
+                "requested_language": language,
+                "active_language": state.get("language"),
+                **(
+                    {
+                        "language_applied": False,
+                        "message": (
+                            "The requested language cannot be applied to the already-running "
+                            "external session. Stop it and launch again to change language."
+                        ),
+                    }
+                    if language is not None
+                    else {}
+                ),
             }
         except Exception:
             pass
@@ -555,14 +616,21 @@ def launch_game(
                 "Another RenForge bridge session is active for this project. "
                 "Stop it from the owning RenForge session before launching with warp."
             )
-            return {
+            result = {
                 "ok": False,
                 "ready": False,
                 "code": "BRIDGE_PROJECT_LOCKED",
                 "phase": "acquiring_project_lock",
                 "message": message,
                 "error": message,
+                "requested_language": language,
             }
+            if language is not None:
+                note = " The requested language cannot be applied to the existing session."
+                result["message"] = message + note
+                result["error"] = message + note
+                result["language_applied"] = False
+            return result
 
     if cancel_event is not None and cancel_event.is_set():
         return cancelled_launch_result(phase="detecting_environment")
@@ -582,6 +650,8 @@ def launch_game(
             launch_kwargs["savedir"] = savedir
         if timeout is not None:
             launch_kwargs["startup_timeout"] = float(timeout)
+        if language is not None:
+            launch_kwargs["language"] = language
         launch_signature = inspect.signature(launch_with_bridge)
         supports_editor = "editor" in launch_signature.parameters or any(
             parameter.kind == inspect.Parameter.VAR_KEYWORD
@@ -604,8 +674,11 @@ def launch_game(
     session_obj.editor = bool(getattr(session_obj, "editor", requested_editor))
     _SESSIONS[key] = session_obj
     label = None
+    active_language = None
     try:
-        label = session_obj.client.get_state().get("current_label")
+        state = session_obj.client.get_state()
+        label = state.get("current_label")
+        active_language = state.get("language")
     except Exception:
         pass
     result: dict[str, Any] = {
@@ -614,6 +687,8 @@ def launch_game(
         "already_running": False,
         "current_label": label,
         "editor": bool(session_obj.editor),
+        "requested_language": language,
+        "active_language": active_language,
         "display": session_obj.display_mode,
         "startup_ms": session_obj.startup_ms,
         "phases": session_obj.phases,

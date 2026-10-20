@@ -207,6 +207,11 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         parameters={
             "project_path": "Project root passed to the launcher and runtime bridge.",
             "warp": "Optional Ren'Py `file.rpy:line` startup target; this launch tool does not resolve label names.",
+            "language": (
+                "Optional Ren'Py language code set as `RENPY_LANGUAGE` for a fresh game process. It overrides the "
+                "player's stored language preference for that session only, is intended for verification, and cannot "
+                "change an already-running session."
+            ),
             "version": "Launcher version selector, either `stable` or an explicit semantic version (for example `8.5.3`).",
             "editor": "Enable/disable live editor injection; default True for interactive work.",
             "display": (
@@ -236,6 +241,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "audio": _enum("auto", "native", "dummy", "none"),
             "persistent": _enum("existing", "empty", "copy", "fixture"),
             "timeout": {"minimum": 0},
+            "language": {"maxLength": 64},
         },
     ),
     "renforge_launch_status": ToolDefinition(
