@@ -28,6 +28,7 @@ class _FakeEditorClient:
             "selected_lock_reason": None,
             "capabilities": {},
             "save_enabled": False,
+            "dry_run_supported": True,
             "status_code": "idle",
             "dirty_target_count": 0,
             "save_in_progress": False,
@@ -120,7 +121,29 @@ def test_status_returns_public_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["selected_source_size"] == [120, 40]
     assert result["preview_size"] == [140, 60]
     assert result["dry_run"] is False
+    assert "dry_run_result" not in result
+    assert "dry_run_error" not in result
     assert "editor_task0" not in json.dumps(result)
+
+
+def test_status_ignores_stale_preview_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _FakeEditorClient()
+    client.status["selected_source_position"] = [12, 34]
+    client.status["preview_position"] = [56, 78]
+    client.status["dry_run_result"] = {"dry_run": True, "state": "dry_run", "diff": "-old\n+new\n"}
+    client.status["dry_run_error"] = "VALIDATION_FAILED"
+    _install_client(monkeypatch, client)
+
+    result = live.editor("/tmp/game", "status")
+
+    assert result["ok"] is True
+    assert result["action"] == "status"
+    assert "dry_run_result" not in result
+    assert "dry_run_error" not in result
+    assert "error" not in result
+    assert result["selected_source_position"] == [12, 34]
+    assert result["preview_position"] == [56, 78]
+    assert "diff" not in result
 
 
 def test_status_keeps_missing_positions_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -228,7 +251,7 @@ def test_save_dry_run_returns_source_diff(monkeypatch: pytest.MonkeyPatch) -> No
     client.status["save_in_progress"] = True
     client.status["save_requested"] = True
     client.status["dry_run_result"] = dict(_DRY_RUN_RESULT)
-    client.save_reply = {"ok": True, "request_id": "dry-1"}
+    client.save_reply = {"ok": True, "request_id": "dry-1", "dry_run": True}
     _install_client(monkeypatch, client)
 
     result = live.editor("/tmp/game", "save", dry_run=True)
@@ -243,13 +266,47 @@ def test_save_dry_run_returns_source_diff(monkeypatch: pytest.MonkeyPatch) -> No
     assert "editor_task0" not in json.dumps(result)
 
 
+def test_save_dry_run_refuses_bridge_without_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeEditorClient()
+    client.status["selected_widget_id"] = "start_btn"
+    client.status["capabilities"] = {"move": True}
+    client.status["save_enabled"] = True
+    client.status.pop("dry_run_supported", None)
+    client.save_reply = {"ok": True, "request_id": "dry-1", "dry_run": True}
+    _install_client(monkeypatch, client)
+
+    result = live.editor("/tmp/game", "save", dry_run=True)
+
+    assert result == {"ok": False, "dry_run": True, "error": "DRY_RUN_UNSUPPORTED"}
+    assert all(command != "editor_task0_save" for command, _payload in client.requests)
+
+
+def test_save_dry_run_requires_preview_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeEditorClient()
+    client.status["selected_widget_id"] = "start_btn"
+    client.status["capabilities"] = {"move": True}
+    client.status["save_enabled"] = True
+    # An old or misbehaving bridge never echoes dry_run back.
+    client.save_reply = {"ok": True, "request_id": "dry-1"}
+    _install_client(monkeypatch, client)
+
+    result = live.editor("/tmp/game", "save", dry_run=True)
+
+    assert result == {"ok": False, "dry_run": True, "error": "DRY_RUN_UNSUPPORTED"}
+    assert ("editor_task0_save", {"dry_run": True}) in client.requests
+
+
 def test_save_dry_run_surfaces_error(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _FakeEditorClient()
     client.status["selected_widget_id"] = "start_btn"
     client.status["capabilities"] = {"move": True}
     client.status["save_enabled"] = True
     client.status["dry_run_error"] = "VALIDATION_FAILED"
-    client.save_reply = {"ok": True, "request_id": "dry-2"}
+    client.save_reply = {"ok": True, "request_id": "dry-2", "dry_run": True}
     _install_client(monkeypatch, client)
 
     result = live.editor("/tmp/game", "save", dry_run=True)
@@ -257,6 +314,19 @@ def test_save_dry_run_surfaces_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["ok"] is False
     assert result["dry_run"] is True
     assert result["error"] == "VALIDATION_FAILED"
+
+
+def test_dry_run_is_rejected_with_position(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _FakeEditorClient()
+    _install_client(monkeypatch, client)
+
+    result = live.editor("/tmp/game", "save", x=40, y=50, dry_run=True)
+
+    assert result["ok"] is False
+    assert result["dry_run"] is True
+    assert "x/y" in result["error"]
+    assert client.requests == []
+    assert client.evals == []
 
 
 def test_dry_run_is_rejected_for_status_and_select(

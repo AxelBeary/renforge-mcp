@@ -217,14 +217,28 @@ def _truncate_unified_diff(diff_text: str, max_bytes: int) -> str:
     return "".join(kept)
 
 
+def _diff_input_lines(text: str) -> list[str]:
+    """Split source text into lines difflib can render losslessly.
+
+    A final line without a newline is annotated with the standard
+    ``\\ No newline at end of file`` marker *inside* the same element.
+    difflib then puts the marker on its own output line; splitting first
+    would instead glue ``-beta`` and ``+BETA`` into ``-beta+BETA``.
+    """
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith(("\n", "\r")):
+        lines[-1] += "\n\\ No newline at end of file\n"
+    return lines
+
+
 def _dry_run_result(transaction: _TransactionRecord) -> dict[str, Any]:
     """Describe a staged transaction as a unified diff, touching nothing."""
     original_text = _decode_diff_text(transaction.original_bytes)
     staged_text = _decode_diff_text(transaction.staged_bytes)
     diff_text = "".join(
         difflib.unified_diff(
-            original_text.splitlines(keepends=True),
-            staged_text.splitlines(keepends=True),
+            _diff_input_lines(original_text),
+            _diff_input_lines(staged_text),
             fromfile=f"a/{transaction.source_relative_path}",
             tofile=f"b/{transaction.source_relative_path}",
             n=3,

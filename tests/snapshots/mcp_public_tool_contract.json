@@ -516,7 +516,7 @@
         },
         "dry_run": {
           "default": false,
-          "description": "`save` only. Preview the source diff without writing, linting, reloading, or creating a transaction.",
+          "description": "`save` only. Preview the source diff without writing, linting, reloading, or creating a transaction. Cannot be combined with x/y.",
           "type": "boolean"
         },
         "expected_frame_id": {

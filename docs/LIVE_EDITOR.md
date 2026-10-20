@@ -51,9 +51,12 @@ state, not failures to retry blindly.
   stages the edit in memory and returns a unified source diff without applying
   anything: it skips shadow validation, publish, reload, and attestation, and
   creates no transaction. The diff is capped at 64 KiB and truncated on a line
-  boundary (`diff_truncated`; `diff_bytes` keeps the full size). Non-UTF-8 bytes
-  are shown with replacement characters instead of failing the preview. Run a
-  real `save` (without `dry_run`) to write the change.
+  boundary (`diff_truncated`; `diff_bytes` keeps the full size), and a missing
+  final newline is marked with `\ No newline at end of file`. It cannot be
+  combined with `x`/`y` because positioning the target is itself a runtime
+  change; select and move first, then preview. A session whose bridge predates
+  dry-run support is refused with `DRY_RUN_UNSUPPORTED` instead of falling back
+  to a real save. Run a real `save` (without `dry_run`) to write the change.
 - **Session-owned bridge/editor artifacts.** Injected bridge and editor files
   belong to the launch session and are cleaned up on a clean
   `renforge_stop` / process teardown. Do not hand-edit generated

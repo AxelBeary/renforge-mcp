@@ -625,7 +625,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "expected_frame_id": "Optional frame id from a recent screenshot or listing; rejects a stale frame.",
             "dry_run": (
                 "`save` only. Preview the source diff without writing, linting, reloading, "
-                "or creating a transaction."
+                "or creating a transaction. Cannot be combined with x/y."
             ),
         },
         parameter_schemas={

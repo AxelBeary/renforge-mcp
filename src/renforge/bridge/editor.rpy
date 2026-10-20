@@ -1805,6 +1805,13 @@ init 1100 python:
 
     def _renforge_editor_reset_dry_run(state):
         """Forget the previous preview result; it belongs to another attempt."""
+        if state.dry_run_request_id is not None:
+            # A preview reply may still arrive after the selection that
+            # requested it is gone. Release the in-flight save flags now so
+            # that late reply cannot leave Save rejected until a restart.
+            state.save_in_progress = False
+            state.save_requested = False
+            state.save_button_state = "idle"
         state.dry_run_result = None
         state.dry_run_error = None
         state.dry_run_request_id = None
@@ -5219,6 +5226,9 @@ init 1100 python:
                 "guide_x": state.guide_x,
                 "guide_y": state.guide_y,
             }
+        # The live position is about to move: a preview diff from before the
+        # move no longer describes the pending edit.
+        _renforge_editor_reset_dry_run(state)
         if record:
             _renforge_editor_push_history([int(snapped_x), int(snapped_y)])
         result = _renforge_editor_set_target_position(
@@ -6122,6 +6132,16 @@ init 1100 python:
             analyze_runtime_key = context.get("runtime_key")
             state.coordinator_applied.append(applied_item)
             state.last_coordinator_apply = applied_item
+            is_dry_run = command in ("commit", "undo_commit") and context.get("dry_run") is True
+            if is_dry_run and (
+                state.dry_run_request_id is None
+                or applied_item.get("request_id") != state.dry_run_request_id
+            ):
+                # A preview reply belongs to the selection that requested it.
+                # Ignore late replies so an old diff cannot masquerade as the
+                # current selection's preview.
+                applied_item["stale_dry_run"] = True
+                continue
             if reply.get("ok") is True:
                 result = reply.get("result")
                 if not isinstance(result, builtins.dict):
@@ -6137,7 +6157,7 @@ init 1100 python:
                         state.selected_analysis_pending = False
                         _renforge_editor_clear_current_analysis(state)
                         _renforge_editor_set_status("analyze_failed")
-                    elif command in ("commit", "undo_commit") and context.get("dry_run") is True:
+                    elif is_dry_run:
                         state.dry_run_result = None
                         state.dry_run_error = state.save_last_error
                         state.dry_run_request_id = None
@@ -6252,7 +6272,7 @@ init 1100 python:
                         state.selected_lock_reason = _renforge_editor_lock_code(lock_reason)
                         state.save_enabled = False
                         _renforge_editor_set_status("locked")
-                elif command in ("commit", "undo_commit") and context.get("dry_run") is True:
+                elif is_dry_run:
                     # Preview only: no pending transaction, handshake, reload,
                     # or save_enabled changes.
                     state.dry_run_result = builtins.dict(result)
@@ -6390,7 +6410,7 @@ init 1100 python:
                     state.selected_analysis_pending = False
                     _renforge_editor_clear_current_analysis(state)
                     _renforge_editor_set_status("analyze_failed")
-                elif command in ("commit", "undo_commit") and context.get("dry_run") is True:
+                elif is_dry_run:
                     state.dry_run_result = None
                     state.dry_run_error = str(state.save_error or state.save_last_error or "DRY_RUN_FAILED")
                     state.dry_run_request_id = None
@@ -7207,6 +7227,7 @@ init 1100 python:
             "ok": True,
             "active": bool(state.active),
             "save_enabled": bool(state.save_enabled),
+            "dry_run_supported": True,
             "save_button_state": state.save_button_state,
             "dirty_target_count": len([target for target in state.targets.values() if target.get("dirty")]),
             "selected_widget_id": state.selected_widget_id,

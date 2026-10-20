@@ -1316,17 +1316,21 @@ def _editor_public_view(
         "dirty_target_count": int(raw.get("dirty_target_count") or 0),
         "dry_run": False,
     }
-    dry_run_result = raw.get("dry_run_result")
-    if isinstance(dry_run_result, dict):
-        view["ok"] = True
-        view["dry_run"] = True
-        for field_name in _EDITOR_DRY_RUN_FIELDS:
-            view[field_name] = dry_run_result.get(field_name)
-    dry_run_error = raw.get("dry_run_error")
-    if dry_run_error:
-        view["ok"] = False
-        view["dry_run"] = True
-        view["error"] = str(dry_run_error)
+    # A preview result belongs to the save call that asked for it. Status
+    # stays a pure observation: it neither reports a stale diff nor turns
+    # ok:false because an earlier preview failed.
+    if action == "save":
+        dry_run_result = raw.get("dry_run_result")
+        if isinstance(dry_run_result, dict):
+            view["ok"] = True
+            view["dry_run"] = True
+            for field_name in _EDITOR_DRY_RUN_FIELDS:
+                view[field_name] = dry_run_result.get(field_name)
+        dry_run_error = raw.get("dry_run_error")
+        if dry_run_error:
+            view["ok"] = False
+            view["dry_run"] = True
+            view["error"] = str(dry_run_error)
     if raw.get("error") is not None:
         view["ok"] = False
         view["error"] = raw["error"]
@@ -1406,6 +1410,12 @@ def editor(
             return {"ok": False, "error": "action must be status, select, or save"}
         if dry_run and action != "save":
             return {"ok": False, "error": "dry_run is only valid with action=save"}
+        if dry_run and (x is not None or y is not None):
+            return {
+                "ok": False,
+                "dry_run": True,
+                "error": "dry_run cannot be combined with x/y; it applies nothing",
+            }
         frame_id = client.screenshot_hash()
         if action == "status":
             return _editor_public_view(_editor_read_status(client), action=action, frame_id=frame_id)
@@ -1439,6 +1449,11 @@ def editor(
         if activated is not None:
             return _editor_public_view(activated, action=action, frame_id=frame_id)
         current = _editor_wait_until_analyzed(client)
+        if dry_run and current.get("dry_run_supported") is not True:
+            # An older bridge ignores the dry_run payload and performs a real
+            # save. Refuse before sending anything: this session may be a
+            # pre-upgrade process that renforge_launch reused.
+            return {"ok": False, "dry_run": True, "error": "DRY_RUN_UNSUPPORTED"}
         lock = _editor_lock_code(current.get("selected_lock_reason"))
         if lock:
             view = _editor_public_view(current, action=action, frame_id=frame_id)
@@ -1470,6 +1485,10 @@ def editor(
                 error = "NO_INTENTS"
             view["error"] = error
             return view
+        if dry_run and save_reply.get("dry_run") is not True:
+            # Defense in depth: a bridge that accepted the RPC but did not
+            # acknowledge preview-only mode must not be reported as a preview.
+            return {"ok": False, "dry_run": True, "error": "DRY_RUN_UNSUPPORTED"}
         if dry_run:
             settled = _editor_wait_until_dry_run_settled(client)
             view = _editor_public_view(settled, action=action, frame_id=client.screenshot_hash())

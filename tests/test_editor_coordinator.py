@@ -611,6 +611,30 @@ def test_dry_run_diff_handles_identical_binary_and_truncation(tmp_path: Path) ->
     assert large["diff"].endswith("\n")
 
 
+def test_dry_run_diff_marks_missing_trailing_newline(tmp_path: Path) -> None:
+    from renforge.editor.coordinator import _TransactionRecord, _dry_run_result
+
+    def record(original: bytes, staged: bytes) -> Any:
+        return _TransactionRecord(
+            transaction_id="dry-run-newline",
+            source_relative_path="script.rpy",
+            source_absolute_path=tmp_path / "script.rpy",
+            original_bytes=original,
+            staged_bytes=staged,
+            original_sha256=hashlib.sha256(original).hexdigest(),
+            staged_sha256=hashlib.sha256(staged).hexdigest(),
+            generation=1,
+            expected_targets=[],
+        )
+
+    preview = _dry_run_result(record(b"alpha\nbeta", b"alpha\nBETA\n"))
+
+    assert "-beta+BETA" not in preview["diff"]
+    assert "-beta\n\\ No newline at end of file\n" in preview["diff"]
+    assert "+BETA\n" in preview["diff"]
+    assert preview["diff_bytes"] == len(preview["diff"].encode("utf-8"))
+
+
 def test_commit_refuses_stale_source_and_duplicate_intent_ids(tmp_path: Path) -> None:
     project, source = _make_project(tmp_path)
     observation = _base_observation()
