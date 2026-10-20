@@ -876,10 +876,10 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "focusable nodes, so use it for full-tree inspection when semantic selectors are ambiguous. `save_as` or "
             "`diff_against` may create `.renforge/scenes/`; `save_as` writes and overwrites the named JSON snapshot. Omit both "
             "options for read-only inspection. With `include=[\"overflow\"]` only `text`, `button`, and `input` nodes get an "
-            "overflow verdict: the unwrapped text size is compared with the widget's absolute `xmaximum`/`ymaximum` "
-            "(falling back to the text's own maximum), integer padding and margins are subtracted from that maximum to "
-            "get the inner box, text that must wrap counts as x overflow, and the wrapped height is compared with the "
-            "inner height for y clipping. Relative maximums are recorded but not compared, and vertical text is not "
+            "overflow verdict: the effective ceiling is the tighter of the widget's absolute `xmaximum`/`ymaximum` "
+            "(minus integer padding and margins) and the child text's own absolute maximum; the unwrapped text size is "
+            "compared with that inner box, text that must wrap counts as x overflow, and the wrapped height is compared "
+            "with the inner height for y clipping. Relative maximums are recorded but not compared, and vertical text is not "
             "measured. When no absolute maximum is declared the verdict is `available: false` with a reason."
         ),
         annotations=_ann(

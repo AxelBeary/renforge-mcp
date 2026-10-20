@@ -333,9 +333,9 @@ Notes:
   and types; truncated values retain up to that many characters and end with `…`.
   IDs use a fixed 256-character cap so they remain stable across output budgets
   and can be passed unchanged to `renforge_measure`.
-- The `overflow` verdict uses pixel maximums only: an int `xmaximum`/`ymaximum`
-  from the widget style wins, otherwise the child text's own maximum is used.
-  Integer padding and margins are subtracted to get the inner box. Natural width
+- The `overflow` verdict uses pixel maximums only: the effective ceiling is the
+  tighter of the widget's int `xmaximum`/`ymaximum` (minus integer padding and
+  margins) and the child text's own int maximum. Natural width
   beyond that box counts as x overflow (the text must wrap), and the height of
   the text rendered at that width is compared with the inner height for y. Float
   (relative) maximums are reported but not compared, and vertical text is not
