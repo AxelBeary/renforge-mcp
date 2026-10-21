@@ -283,6 +283,24 @@ def test_save_dry_run_refuses_bridge_without_capability(
     assert all(command != "editor_task0_save" for command, _payload in client.requests)
 
 
+def test_save_dry_run_reports_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _FakeEditorClient()
+    client.status["selected_widget_id"] = "start_btn"
+    client.status["capabilities"] = {"move": True}
+    client.status["save_enabled"] = True
+    client.status["save_in_progress"] = True
+    client.status["save_requested"] = True
+    client.save_reply = {"ok": True, "request_id": "dry-1", "dry_run": True}
+    _install_client(monkeypatch, client)
+    monkeypatch.setattr(live, "_EDITOR_DRY_RUN_WAIT_SECONDS", 0.0)
+
+    result = live.editor("/tmp/game", "save", dry_run=True)
+
+    assert result["ok"] is False
+    assert result["dry_run"] is True
+    assert result["error"] == "DRY_RUN_TIMEOUT"
+
+
 def test_save_dry_run_requires_preview_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

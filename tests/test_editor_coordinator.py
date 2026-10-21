@@ -605,9 +605,26 @@ def test_dry_run_diff_handles_identical_binary_and_truncation(tmp_path: Path) ->
     original = b"".join(b"line %d\n" % index for index in range(10000))
     staged = b"".join(b"line %d preview\n" % index for index in range(10000))
     large = _dry_run_result(record(original, staged))
+    import difflib
+
+    from renforge.editor.coordinator import _diff_input_lines
+
+    full_diff = "".join(
+        difflib.unified_diff(
+            _diff_input_lines(original.decode("utf-8")),
+            _diff_input_lines(staged.decode("utf-8")),
+            fromfile="a/script.rpy",
+            tofile="b/script.rpy",
+            n=3,
+        )
+    )
     assert large["diff_truncated"] is True
+    assert large["diff_bytes"] == len(full_diff.encode("utf-8"))
     assert large["diff_bytes"] > DRY_RUN_DIFF_MAX_BYTES
     assert len(large["diff"].encode("utf-8")) <= DRY_RUN_DIFF_MAX_BYTES
+    assert large["diff"].startswith("--- a/script.rpy\n+++ b/script.rpy\n")
+    assert "-line 0\n" in large["diff"]
+    assert "+line 0 preview\n" in full_diff
     assert large["diff"].endswith("\n")
 
 
