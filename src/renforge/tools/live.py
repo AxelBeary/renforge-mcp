@@ -391,6 +391,11 @@ def _project_relative_path(project_path: str | Path, path: str | Path) -> str:
     """Return a project-relative POSIX path, or an absolute POSIX path outside."""
     project_root = Path(project_path).expanduser().resolve()
     candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        # Receipts name files inside the project, so a relative path is
+        # relative to the project root, never to the server's working
+        # directory.
+        candidate = project_root / candidate
     try:
         resolved = candidate.resolve()
     except OSError:
@@ -1363,6 +1368,8 @@ def _editor_saved_paths(raw: dict[str, Any]) -> list[str]:
     Editor transaction records store ``source_relative_path`` relative to the
     ``game/`` directory (for example ``screens.rpy``). Every receipt is
     project-relative, so add the ``game/`` base unless it is already present.
+    A record that is absolute or escapes its own base is not a shape this
+    contract can describe, so no receipt is emitted rather than a guessed one.
     """
     commit = raw.get("last_commit_status")
     if not isinstance(commit, dict):
@@ -1373,6 +1380,9 @@ def _editor_saved_paths(raw: dict[str, Any]) -> list[str]:
     if not isinstance(source, str) or not source:
         return []
     normalized = source.replace("\\", "/").removeprefix("./")
+    parts = normalized.split("/")
+    if not normalized or normalized.startswith("/") or ":" in parts[0] or ".." in parts:
+        return []
     if normalized.startswith("game/"):
         return [normalized]
     return ["game/" + normalized]

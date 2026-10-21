@@ -3659,3 +3659,31 @@ def test_editor_save_receipt_reads_only_a_completed_commit() -> None:
     assert _editor_saved_paths(already_prefixed) == ["game/screens.rpy"]
     assert _editor_saved_paths({"last_commit_status": {"state": "failed"}}) == []
     assert _editor_saved_paths({"last_commit_status": None}) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["/abs/screens.rpy", "C:/proj/game/screens.rpy", "../outside.rpy", "game/../x.rpy"],
+)
+def test_editor_save_receipt_refuses_a_path_it_cannot_place(source: str) -> None:
+    from renforge.tools.live import _editor_saved_paths
+
+    raw = {"last_commit_status": {"state": "published", "source_relative_path": source}}
+
+    assert _editor_saved_paths(raw) == []
+
+
+def test_project_relative_receipt_anchors_relative_paths_to_the_project(tmp_path) -> None:
+    from renforge.tools.live import _project_relative_path
+
+    project = tmp_path / "proj"
+    (project / ".renforge" / "scenes").mkdir(parents=True)
+    (project / ".renforge" / "scenes" / "a.json").write_text("{}", encoding="utf-8")
+    outside = tmp_path / "elsewhere.json"
+    outside.write_text("{}", encoding="utf-8")
+
+    assert _project_relative_path(project, ".renforge/scenes/a.json") == ".renforge/scenes/a.json"
+    assert _project_relative_path(project, project / ".renforge" / "scenes" / "a.json") == (
+        ".renforge/scenes/a.json"
+    )
+    assert _project_relative_path(project, outside) == outside.resolve().as_posix()

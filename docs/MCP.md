@@ -495,8 +495,11 @@ return `files_deleted`. Paths inside the project are project-relative POSIX
 (for example `game/screens.rpy`, `game/tl/french`, or `dialogue.txt`); paths
 outside the project (an external build destination or Ren'Py's savedir) stay
 absolute. A tool that cannot enumerate its outputs — `renforge_launch`, lint
-analysis, or a failed build or translation — omits the key instead of
-returning an empty list, so an empty list always means "wrote nothing".
+analysis, a failed build or translation, or a build that used Ren'Py's default
+destination because no `destination` was passed — omits the key instead of
+returning an empty list, so an empty list always means "wrote nothing". The
+journal's `files_touched_recorded` flag tells those two cases apart without
+having to remember which tools are which.
 `renforge_saves` additionally labels the external savedir with `savedir`.
 
 Each `.renforge/activity.jsonl` entry carries `files_touched_recorded` and
