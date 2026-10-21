@@ -757,7 +757,7 @@ def stop_external_game(project_path: str, *, timeout: float = 5.0) -> dict:
     try:
         info = read_bridge_info(project.root, require_ready=True)
     except Exception:
-        return {"ok": True, "was_running": False}
+        return {"ok": True, "was_running": False, "files_deleted": []}
 
     old_session_id = info.session_id
     remaining = max(0.05, deadline - time.monotonic())
