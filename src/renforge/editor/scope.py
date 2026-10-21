@@ -23,7 +23,6 @@ import fnmatch
 import os
 import re
 from collections.abc import Mapping, Sequence
-from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 from .exceptions import EditorError
@@ -81,23 +80,31 @@ def is_path_in_scope(relative_path: str, scope: Sequence[str]) -> bool:
     return any(_match_parts(tuple(pattern.split("/")), path_parts) for pattern in scope)
 
 
-# Matching ``**`` patterns recursively revisits the same pattern/path suffix
-# pairs; caching them keeps a pattern with many ``**`` segments polynomial.
-@lru_cache(maxsize=None)
+# Match with an explicit stack: a pattern containing many ``**`` segments can
+# otherwise hit Python's recursion limit on a deep or non-matching target.
 def _match_parts(pattern_parts: tuple[str, ...], path_parts: tuple[str, ...]) -> bool:
-    if not pattern_parts:
-        return not path_parts
-    head = pattern_parts[0]
-    rest = pattern_parts[1:]
-    if head == "**":
-        return _match_parts(rest, path_parts) or (
-            bool(path_parts) and _match_parts(pattern_parts, path_parts[1:])
-        )
-    if not path_parts:
-        return False
-    if not fnmatch.fnmatchcase(path_parts[0], head):
-        return False
-    return _match_parts(rest, path_parts[1:])
+    pending = [(0, 0)]
+    seen: set[tuple[int, int]] = set()
+    while pending:
+        pattern_index, path_index = pending.pop()
+        state = (pattern_index, path_index)
+        if state in seen:
+            continue
+        seen.add(state)
+        if pattern_index == len(pattern_parts):
+            if path_index == len(path_parts):
+                return True
+            continue
+        head = pattern_parts[pattern_index]
+        if head == "**":
+            pending.append((pattern_index + 1, path_index))
+            if path_index < len(path_parts):
+                pending.append((pattern_index, path_index + 1))
+        elif path_index < len(path_parts) and fnmatch.fnmatchcase(
+            path_parts[path_index], head
+        ):
+            pending.append((pattern_index + 1, path_index + 1))
+    return False
 
 
 def require_in_scope(project_root: str | Path, relative_path: str) -> None:

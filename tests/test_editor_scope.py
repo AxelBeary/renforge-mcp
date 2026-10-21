@@ -87,6 +87,13 @@ def test_star_does_not_cross_directory_separators() -> None:
     assert is_path_in_scope("screens/say.rpy", ("*.rpy",)) is False
 
 
+def test_many_double_star_segments_do_not_recurse() -> None:
+    pattern = "/".join(["**"] * 60 + ["target.rpy"])
+    path = "/".join([f"d{index}" for index in range(200)] + ["target.rpy"])
+
+    assert is_path_in_scope(path, (pattern,)) is True
+
+
 def test_double_star_crosses_directories_including_zero() -> None:
     scope = ("screens/**/*.rpy",)
     assert is_path_in_scope("screens/say.rpy", scope) is True
