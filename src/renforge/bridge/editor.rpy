@@ -2553,11 +2553,17 @@ init 1100 python:
             config = _renforge_editor_host_config()
             if config is None:
                 raise RuntimeError("editor host is unavailable")
+            # A dry-run may observe several intents before it can produce the
+            # diff; give the coordinator the same window as the MCP caller
+            # instead of the short real-save request timeout.
+            request_timeout = 35.0 if (request.get("context") or {}).get("dry_run") is True else 5.0
             last_error = None
             for _attempt in range(2):
                 try:
-                    with socket.create_connection((config["host"], config["port"]), timeout=5.0) as sock:
-                        sock.settimeout(5.0)
+                    with socket.create_connection(
+                        (config["host"], config["port"]), timeout=request_timeout
+                    ) as sock:
+                        sock.settimeout(request_timeout)
                         file_obj = sock.makefile("rb")
                         auth_frame = {
                             "protocol": "renforge-editor",
