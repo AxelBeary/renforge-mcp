@@ -1218,10 +1218,9 @@ def click_element(
 _EDITOR_ACTIONS = frozenset({"status", "select", "save"})
 _EDITOR_ANALYSIS_WAIT_SECONDS = 5.0
 _EDITOR_SAVE_WAIT_SECONDS = 30.0
-# A preview stages several intentions and waits for runtime observations, and
-# the bridge allows the request 35 s for exactly that. Waiting less would call
-# a slow preview a failure while it is still running.
-_EDITOR_DRY_RUN_WAIT_SECONDS = 35.0
+# Kept below the bridge's 35 s request budget so the tool always stops before
+# the engine does, and reports a timeout instead of racing the socket.
+_EDITOR_DRY_RUN_WAIT_SECONDS = 30.0
 _EDITOR_STATUS_RPC = "editor_task0_status"
 _EDITOR_SELECT_RPC = "editor_task0_select"
 _EDITOR_SAVE_RPC = "editor_task0_save"
