@@ -491,7 +491,8 @@ escape hatch above.
 
 Mutating tools that can enumerate their outputs report a write receipt:
 `files_touched` lists the files or directories written, and cleanup tools also
-return `files_deleted`. Paths inside the project are project-relative POSIX
+return `files_deleted`. A cleanup that fails part-way still lists the paths that
+are actually gone, and `failed` names the resource it could not finish. Paths inside the project are project-relative POSIX
 (for example `game/screens.rpy`, `game/tl/french`, or `dialogue.txt`); paths
 outside the project (an external build destination or Ren'Py's savedir) stay
 absolute. A tool that cannot enumerate its outputs — `renforge_launch`, lint

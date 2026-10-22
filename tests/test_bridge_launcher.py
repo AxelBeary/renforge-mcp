@@ -386,6 +386,41 @@ def test_bridge_session_close_reports_a_removed_temporary_savedir(
     assert result["files_deleted"] == [savedir.resolve().as_posix()]
 
 
+def test_partial_savedir_cleanup_still_reports_the_paths_it_removed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    savedir = tmp_path / "renforge-saves"
+    (savedir / "nested").mkdir(parents=True)
+    removed_file = savedir / "nested" / "1-1-LT1.save"
+    removed_file.write_text("save", encoding="utf-8")
+    surviving_file = savedir / "2-1-LT1.save"
+    surviving_file.write_text("save", encoding="utf-8")
+
+    from renforge.bridge import launcher as launcher_module
+
+    def partial_rmtree(_path, **_kwargs):
+        removed_file.unlink()
+        raise OSError("locked")
+
+    monkeypatch.setattr(launcher_module.shutil, "rmtree", partial_rmtree)
+    session = BridgeSession(
+        _FakeProcess(),
+        _FakeClient(),
+        project_root,
+        temporary_savedir=savedir,
+        cleanup_savedir=True,
+    )
+
+    result = session.close()
+
+    assert result["cleaned"]["temporary_savedir"] is False
+    assert "temporary_savedir" in result["failed"]
+    assert result["files_deleted"] == [removed_file.resolve().as_posix()]
+    assert surviving_file.exists()
+
+
 def test_failed_launch_removes_every_generated_bridge_artifact(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DISPLAY", ":0")
     project, sdk, root = _make_project(tmp_path)

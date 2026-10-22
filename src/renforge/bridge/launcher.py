@@ -476,6 +476,18 @@ def _editor_environment(
     }
 
 
+def _existing_paths(root: Path) -> list[Path]:
+    """Every existing path under ``root``, so a partial delete can be reported."""
+    if not root.exists():
+        return []
+    paths: list[Path] = []
+    for current, _directories, filenames in os.walk(root):
+        base = Path(current)
+        paths.append(base)
+        paths.extend(base / name for name in filenames)
+    return paths
+
+
 def _deletion_receipt(project_root: Path, path: Path) -> str:
     """Render a removed path for ``files_deleted``.
 
@@ -655,6 +667,9 @@ class BridgeSession:
 
         if self.cleanup_savedir and self.temporary_savedir is not None:
             savedir = self.temporary_savedir
+            # A failed rmtree may still have removed part of the tree, and the
+            # receipt has to name what is actually gone rather than nothing.
+            known_paths = _existing_paths(savedir)
             try:
                 shutil.rmtree(savedir, ignore_errors=False)
                 cleaned["temporary_savedir"] = True
@@ -663,6 +678,9 @@ class BridgeSession:
                 cleaned["temporary_savedir"] = True
             except Exception:
                 failed.append("temporary_savedir")
+                for path in sorted(known_paths, key=lambda item: len(item.parts), reverse=True):
+                    if not path.exists():
+                        removed.append(_deletion_receipt(self._project_root, path))
             else:
                 removed.append(_deletion_receipt(self._project_root, savedir))
 

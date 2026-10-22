@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -211,6 +213,9 @@ def test_activity_log_overflow_spills_full_path_list_to_private_sidecar(
     assert sidecar_path.is_file()
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     assert sidecar["files_touched"] == paths
+    if os.name == "posix":
+        assert stat.S_IMODE(sidecar_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(sidecar_path.parent.stat().st_mode) == 0o700
 
 
 def test_activity_log_spills_an_oversized_deleted_list_too(tmp_path: Path) -> None:
@@ -252,6 +257,23 @@ def test_activity_log_sidecar_is_only_written_when_the_list_is_truncated(
     sidecar_path = tmp_path / entry["files_touched_file"]
     assert sidecar_path.is_file()
     assert json.loads(sidecar_path.read_text(encoding="utf-8"))["files_touched"] == paths
+
+    # A receipt that fits in 32 paths needs no sidecar at all.
+    (tmp_path / ".renforge" / "activity.jsonl").unlink()
+    fits = [f"game/kept_{index}.rpy" for index in range(32)]
+    log_tool_call(
+        tmp_path,
+        "renforge_web_build",
+        {"project_path": str(tmp_path)},
+        4.0,
+        {"ok": True, "files_touched": fits},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched"] == fits
+    assert "files_touched_file" not in entry
+    assert "files_touched_truncated" not in entry
+    assert not any((tmp_path / ".renforge" / "activity-files").glob("*.json"))
 
 
 def test_read_only_wrapper_is_not_journaled_even_when_the_result_has_writes(
