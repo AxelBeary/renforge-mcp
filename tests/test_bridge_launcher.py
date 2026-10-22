@@ -1114,6 +1114,32 @@ def test_bridge_session_close_is_idempotent(tmp_path: Path) -> None:
     assert second["cleaned"]["renpy_process"] is True
 
 
+def test_repeated_close_does_not_repeat_the_first_calls_deletions(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    savedir = tmp_path / "renforge-saves"
+    savedir.mkdir()
+    (savedir / "1-1-LT1.save").write_text("save", encoding="utf-8")
+    session = BridgeSession(
+        _FakeProcess(),
+        _FakeClient(),
+        project_root,
+        temporary_savedir=savedir,
+        cleanup_savedir=True,
+    )
+
+    first = session.close()
+    second = session.close()
+
+    assert first["files_deleted"] == [savedir.resolve().as_posix()]
+    # The second call deleted nothing, so it reports no deletions even though
+    # the cleanup state still names what the first call did.
+    assert second["files_deleted"] == []
+    assert second["cleaned"]["temporary_savedir"] is True
+
+
 def test_editor_launch_failure_cleans_resources_and_closes_coordinator(
     monkeypatch, tmp_path: Path
 ) -> None:

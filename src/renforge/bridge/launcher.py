@@ -584,7 +584,10 @@ class BridgeSession:
                     self._close_result
                     or {"cleaned": self._cleaned, "failed": ["close"]}
                 )
-                result.setdefault("files_deleted", [])
+                # A receipt belongs to the call that performed the deletion.
+                # This call deleted nothing, so it must not claim the paths an
+                # earlier close already removed.
+                result["files_deleted"] = []
                 return result
             self._close_result = self._close_resources(timeout)
             ownership_failures = {"process_alive", "bridge_artifacts", "temporary_savedir", "editor_coordinator"}
