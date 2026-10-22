@@ -260,6 +260,7 @@ def test_activity_log_sidecar_is_only_written_when_the_list_is_truncated(
 
     # A receipt that fits in 32 paths needs no sidecar at all.
     (tmp_path / ".renforge" / "activity.jsonl").unlink()
+    sidecar_path.unlink()
     fits = [f"game/kept_{index}.rpy" for index in range(32)]
     log_tool_call(
         tmp_path,
@@ -272,7 +273,7 @@ def test_activity_log_sidecar_is_only_written_when_the_list_is_truncated(
     entry = _read_entry(tmp_path)
     assert entry["files_touched"] == fits
     assert "files_touched_file" not in entry
-    assert "files_touched_truncated" not in entry
+    assert entry["files_touched_truncated"] is False
     assert not any((tmp_path / ".renforge" / "activity-files").glob("*.json"))
 
 
