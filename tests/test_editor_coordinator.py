@@ -623,6 +623,9 @@ def test_dry_run_diff_handles_identical_binary_and_truncation(tmp_path: Path) ->
     assert large["diff_bytes"] > DRY_RUN_DIFF_MAX_BYTES
     assert len(large["diff"].encode("utf-8")) <= DRY_RUN_DIFF_MAX_BYTES
     assert large["diff"].startswith("--- a/script.rpy\n+++ b/script.rpy\n")
+    # A truncated diff is a prefix of the real one, never a rewritten report.
+    assert full_diff.startswith(large["diff"])
+    assert large["changed"] is True
     assert "-line 0\n" in large["diff"]
     assert "+line 0 preview\n" in full_diff
     assert large["diff"].endswith("\n")
