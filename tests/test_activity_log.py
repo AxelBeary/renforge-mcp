@@ -423,3 +423,54 @@ def test_activity_log_does_not_follow_project_swapped_after_validation(
         log_tool_call(project, "renforge_set_var", {"name": "x"}, 1.0, {"ok": True})
 
     assert not (outside / ".renforge" / "activity.jsonl").exists()
+
+
+def test_activity_log_prunes_old_sidecars(monkeypatch, tmp_path: Path) -> None:
+    from renforge import activity_log as logmod
+    from renforge.util.files import ensure_private_directory
+
+    sidecar_dir = ensure_private_directory(tmp_path / ".renforge" / "activity-files")
+    for stamp in (1, 2, 3):
+        (sidecar_dir / f"{stamp}-{'a' * 16}.json").write_text("{}", encoding="utf-8")
+    unrelated = sidecar_dir / "keep-me.txt"
+    unrelated.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(logmod, "_MAX_ACTIVITY_SIDECARS", 2)
+
+    paths = [f"game/file_{index}.rpy" for index in range(33)]
+    log_tool_call(
+        tmp_path,
+        "renforge_write",
+        {"project_path": str(tmp_path)},
+        1.0,
+        {"ok": True, "files_touched": paths},
+    )
+
+    entry = _read_entry(tmp_path)
+    assert entry["files_touched_truncated"] is True
+    assert (tmp_path / entry["files_touched_file"]).is_file()
+
+    remaining = sorted(path.name for path in sidecar_dir.iterdir())
+    assert remaining == sorted(
+        [f"3-{'a' * 16}.json", entry["files_touched_file"].rsplit("/", 1)[-1], unrelated.name]
+    )
+
+
+def test_activity_log_prunes_sidecars_over_the_byte_budget(monkeypatch, tmp_path: Path) -> None:
+    from renforge import activity_log as logmod
+    from renforge.util.files import ensure_private_directory
+
+    sidecar_dir = ensure_private_directory(tmp_path / ".renforge" / "activity-files")
+    for stamp in (1, 2, 3):
+        (sidecar_dir / f"{stamp}-{'b' * 16}.json").write_bytes(b"x" * 10)
+    monkeypatch.setattr(logmod, "_MAX_ACTIVITY_SIDECARS", 10)
+    monkeypatch.setattr(logmod, "_MAX_ACTIVITY_SIDECAR_BYTES", 25)
+
+    logmod._prune_files_sidecars(sidecar_dir)
+    assert sorted(path.name for path in sidecar_dir.iterdir()) == [
+        f"2-{'b' * 16}.json",
+        f"3-{'b' * 16}.json",
+    ]
+
+    monkeypatch.setattr(logmod, "_MAX_ACTIVITY_SIDECAR_BYTES", 1)
+    logmod._prune_files_sidecars(sidecar_dir)
+    assert [path.name for path in sidecar_dir.iterdir()] == [f"3-{'b' * 16}.json"]

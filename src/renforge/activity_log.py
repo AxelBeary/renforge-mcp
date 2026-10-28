@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -14,8 +15,11 @@ from .util.files import append_nofollow, ensure_private_directory, write_json_at
 
 
 _MAX_ACTIVITY_BYTES = 8192
+_MAX_ACTIVITY_SIDECARS = 200
+_MAX_ACTIVITY_SIDECAR_BYTES = 50 * 1024 * 1024
 _MAX_STRING_CHARS = 512
 _MAX_COLLECTION_ITEMS = 32
+_SIDECAR_NAME_RE = re.compile(r"^\d+-[0-9a-f]{16}\.json\Z")
 _SENSITIVE_TOKENS = frozenset(
     {
         "authorization",
@@ -153,6 +157,45 @@ def summarize_result(result: Any) -> dict[str, Any]:
     }
 
 
+def _prune_files_sidecars(directory: Path) -> None:
+    """Keep the newest sidecars within the count and byte budgets.
+
+    Sidecars are written only when a path list does not fit in the compact
+    journal entry. Without a cap a long session would grow the game folder
+    forever, so old receipts are removed after a successful write. The newest
+    receipt is always kept, even when it alone exceeds the byte budget.
+    """
+    try:
+        sidecars = []
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if not _SIDECAR_NAME_RE.fullmatch(entry.name):
+                    continue
+                try:
+                    if entry.is_file(follow_symlinks=False):
+                        size = entry.stat(follow_symlinks=False).st_size
+                        sidecars.append((int(entry.name.split("-", 1)[0]), entry.name, size))
+                except OSError:
+                    continue
+    except OSError:
+        return
+    sidecars.sort(reverse=True)
+    kept = 0
+    total = 0
+    for _, _, size in sidecars:
+        if kept >= _MAX_ACTIVITY_SIDECARS:
+            break
+        if kept and total + size > _MAX_ACTIVITY_SIDECAR_BYTES:
+            break
+        kept += 1
+        total += size
+    for _, name, _ in sidecars[kept:]:
+        try:
+            (directory / name).unlink()
+        except OSError:
+            pass
+
+
 def _write_files_sidecar(
     activity_dir: Path,
     project_root: Path,
@@ -179,6 +222,7 @@ def _write_files_sidecar(
         write_json_atomic(path, payload, mode=0o600, follow_symlinks=False)
     except Exception:
         return None
+    _prune_files_sidecars(directory)
     try:
         return path.relative_to(project_root).as_posix()
     except ValueError:
