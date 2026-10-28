@@ -2763,7 +2763,9 @@ init python:
 
     def _renforge_scene_text_subject(d, depth=0, seen=None):
         # Buttons and inputs wrap the displayable that actually draws text.
-        # Search a few levels down, without following cycles.
+        # Search a few levels down, without following cycles. The first text
+        # child is the subject; controls normally expose one label, and picking
+        # a "largest" child would guess at intent.
         if d is None:
             return None
         if seen is None:
@@ -2948,15 +2950,17 @@ init python:
         axes = {"x": max(0, natural["width"] - effective["x"]), "y": None}
         if effective["y"] is not None:
             axes["y"] = max(0, rendered["height"] - effective["y"])
-        measured = [value for value in axes.values() if value is not None]
+        # x records how far the text must wrap; y records actual vertical
+        # clipping. A paragraph that wraps but still fits is not an overflow.
+        overflow = None if axes["y"] is None else axes["y"] > 0
         return {
             "available": True,
             "complete": effective["y"] is not None,
             "unmeasured_axes": [] if effective["y"] is not None else ["y"],
-            "overflow": any(value > 0 for value in measured),
+            "overflow": overflow,
             "overflow_axes": axes,
-            "overflow_px": max(measured) if measured else 0,
-            "wrapped": {"x": (axes["x"] or 0) > 0, "y": (axes["y"] or 0) > 0},
+            "overflow_px": axes["y"],
+            "wrapped": {"x": axes["x"] > 0, "y": overflow is True},
             "natural": natural,
             "rendered": rendered,
             "constraints": constraints,

@@ -113,6 +113,18 @@ class _FakeTextButtonDisplayable:
         self.style = types.SimpleNamespace(**style)
 
 
+class _FakeImageDisplayable:
+    """Non-text child that must not be mistaken for the label."""
+
+
+class _FakeChildrenButtonDisplayable:
+    """Control with several children, such as an icon plus a label."""
+
+    def __init__(self, *children, **style):
+        self.children = list(children)
+        self.style = types.SimpleNamespace(**style)
+
+
 class _FakeFocus:
     def __init__(self, text, x, y, w, h, widget=None):
         if widget is not None:
@@ -4128,9 +4140,9 @@ def test_scene_overflow_compares_text_size_to_int_maximum(running_bridge):
     )
 
     assert overflow["available"] is True
-    assert overflow["overflow"] is True
+    assert overflow["overflow"] is None
     assert overflow["overflow_axes"] == {"x": 100, "y": None}
-    assert overflow["overflow_px"] == 100
+    assert overflow["overflow_px"] is None
     assert overflow["wrapped"] == {"x": True, "y": False}
     assert overflow["natural"] == {"width": 300, "height": 40}
     assert overflow["rendered"] == {"width": 300, "height": 40}
@@ -4219,7 +4231,7 @@ def test_scene_overflow_x_only_marks_y_unmeasured(running_bridge):
     assert overflow["complete"] is False
     assert overflow["unmeasured_axes"] == ["y"]
     assert overflow["overflow_axes"] == {"x": 100, "y": None}
-    assert overflow["overflow"] is True
+    assert overflow["overflow"] is None
 
 
 def test_scene_overflow_y_only_is_not_a_verdict(running_bridge):
@@ -4239,9 +4251,10 @@ def test_scene_overflow_reads_button_child_text(running_bridge):
     overflow = running_bridge.globs["_renforge_scene_overflow"](button)
 
     assert overflow["available"] is True
-    assert overflow["overflow"] is True
+    assert overflow["overflow"] is False
     assert overflow["overflow_axes"] == {"x": 80, "y": 0}
-    assert overflow["overflow_px"] == 80
+    assert overflow["overflow_px"] == 0
+    assert overflow["wrapped"] == {"x": True, "y": False}
     assert overflow["natural"] == {"width": 280, "height": 20}
     assert overflow["constraints"] == {
         "host_xmaximum": 200,
@@ -4256,6 +4269,37 @@ def test_scene_overflow_reads_button_child_text(running_bridge):
     }
 
 
+def test_scene_overflow_does_not_call_horizontal_wrapping_an_overflow(running_bridge):
+    # The paragraph wraps but still fits vertically, so it is not clipped.
+    text = _FakeWrappingTextDisplayable(320, 20, 200, 60)
+    button = _FakeTextButtonDisplayable(text, xmaximum=200, ymaximum=100)
+
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["available"] is True
+    assert overflow["overflow_axes"] == {"x": 120, "y": 0}
+    assert overflow["overflow"] is False
+    assert overflow["overflow_px"] == 0
+    assert overflow["wrapped"] == {"x": True, "y": False}
+
+
+def test_scene_overflow_measures_the_label_after_an_icon(running_bridge):
+    button = _FakeChildrenButtonDisplayable(
+        _FakeImageDisplayable(),
+        _FakeTextDisplayable(280, 20),
+        xmaximum=200,
+        ymaximum=100,
+    )
+
+    overflow = running_bridge.globs["_renforge_scene_overflow"](button)
+
+    assert overflow["available"] is True
+    assert overflow["natural"] == {"width": 280, "height": 20}
+    assert overflow["overflow_axes"] == {"x": 80, "y": 0}
+    assert overflow["overflow"] is False
+    assert overflow["overflow_px"] == 0
+
+
 def test_scene_overflow_measures_wrapped_height_against_inner_box(running_bridge):
     # A caption wider than the button wraps; the wrapped height must be
     # compared with the button maximum instead of the unwrapped height.
@@ -4267,7 +4311,7 @@ def test_scene_overflow_measures_wrapped_height_against_inner_box(running_bridge
     assert overflow["natural"] == {"width": 320, "height": 20}
     assert overflow["rendered"] == {"width": 200, "height": 160}
     assert overflow["overflow_axes"] == {"x": 120, "y": 60}
-    assert overflow["overflow_px"] == 120
+    assert overflow["overflow_px"] == 60
     assert overflow["overflow"] is True
     assert overflow["wrapped"] == {"x": True, "y": True}
 
@@ -4280,7 +4324,7 @@ def test_scene_overflow_subtracts_integer_button_padding(running_bridge):
     overflow = running_bridge.globs["_renforge_scene_overflow"](button)
 
     assert overflow["overflow_axes"] == {"x": 20, "y": None}
-    assert overflow["overflow_px"] == 20
+    assert overflow["overflow_px"] is None
     assert overflow["constraints"]["effective_xmaximum"] == 260
     assert overflow["constraints"]["padding"] == {"left": 20, "right": 20}
     # A non-integer margin is recorded nowhere and never subtracted.
@@ -4321,9 +4365,9 @@ def test_scene_overflow_takes_tighter_of_host_and_subject_maximums(running_bridg
     overflow = running_bridge.globs["_renforge_scene_overflow"](button)
 
     assert overflow["available"] is True
-    assert overflow["overflow"] is True
+    assert overflow["overflow"] is None
     assert overflow["overflow_axes"] == {"x": 160, "y": None}
-    assert overflow["overflow_px"] == 160
+    assert overflow["overflow_px"] is None
     assert overflow["constraints"]["host_xmaximum"] == 300
     assert overflow["constraints"]["subject_xmaximum"] == 120
     assert overflow["constraints"]["effective_xmaximum"] == 120
