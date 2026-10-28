@@ -184,10 +184,8 @@ def test_start_launch_does_not_claim_a_new_language_for_a_running_task(tmp_path)
         live.stop_game(str(tmp_path))
 
 
-def test_launch_game_echoes_language_from_a_fresh_session(tmp_path, monkeypatch):
-    (tmp_path / "game").mkdir()
-    calls = {}
-    session = types.SimpleNamespace(
+def _fresh_session(state):
+    return types.SimpleNamespace(
         editor=True,
         display_mode="native",
         startup_ms=1,
@@ -196,10 +194,14 @@ def test_launch_game_echoes_language_from_a_fresh_session(tmp_path, monkeypatch)
         temporary_savedir=None,
         headless=False,
         process=types.SimpleNamespace(poll=lambda: None),
-        client=types.SimpleNamespace(
-            get_state=lambda: {"current_label": "start", "language": "japanese"}
-        ),
+        client=types.SimpleNamespace(get_state=lambda: state),
     )
+
+
+def test_launch_game_echoes_language_from_a_fresh_session(tmp_path, monkeypatch):
+    (tmp_path / "game").mkdir()
+    calls = {}
+    session = _fresh_session({"current_label": "start", "language": "japanese"})
     monkeypatch.setattr(live, "get_or_install_sdk", lambda *_args, **_kwargs: object())
 
     def fake_launch_with_bridge(_sdk, _project, **kwargs):
@@ -213,6 +215,35 @@ def test_launch_game_echoes_language_from_a_fresh_session(tmp_path, monkeypatch)
     assert calls["language"] == "japanese"
     assert result["requested_language"] == "japanese"
     assert result["active_language"] == "japanese"
+    assert result["language_applied"] is True
+    assert "warning" in result
+    live._SESSIONS.pop(live._key(tmp_path), None)
+
+
+def test_launch_game_keeps_language_unknown_when_the_bridge_does_not_report_it(tmp_path, monkeypatch):
+    (tmp_path / "game").mkdir()
+    session = _fresh_session({"current_label": "start"})
+    monkeypatch.setattr(live, "get_or_install_sdk", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(live, "launch_with_bridge", lambda *_args, **_kwargs: session)
+
+    result = live.launch_game(str(tmp_path), language="japanese")
+
+    assert result["active_language"] is None
+    assert result["language_applied"] is None
+    assert "warning" in result
+    live._SESSIONS.pop(live._key(tmp_path), None)
+
+
+def test_launch_game_does_not_warn_when_the_language_is_isolated(tmp_path, monkeypatch):
+    (tmp_path / "game").mkdir()
+    session = _fresh_session({"current_label": "start", "language": "japanese"})
+    monkeypatch.setattr(live, "get_or_install_sdk", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(live, "launch_with_bridge", lambda *_args, **_kwargs: session)
+
+    result = live.launch_game(str(tmp_path), language="japanese", savedir="temporary")
+
+    assert result["language_applied"] is True
+    assert "warning" not in result
     live._SESSIONS.pop(live._key(tmp_path), None)
 
 
@@ -261,12 +292,13 @@ def test_launch_game_reports_language_on_external_session_mode_mismatch(tmp_path
         ),
     )
 
-    result = live.launch_game(str(tmp_path), language="german")
+    result = live.launch_game(str(tmp_path), language="english")
 
     assert result["code"] == "SESSION_MODE_MISMATCH"
-    assert result["requested_language"] == "german"
+    assert result["requested_language"] == "english"
     assert result["active_language"] == "english"
     assert result["language_applied"] is False
+    assert "already_active" not in result
 
 
 def test_launch_game_reports_language_cannot_apply_when_project_is_locked(tmp_path, monkeypatch):
@@ -280,9 +312,38 @@ def test_launch_game_reports_language_cannot_apply_when_project_is_locked(tmp_pa
         ),
     )
 
-    result = live.launch_game(str(tmp_path), warp="game/script.rpy:1", language="japanese")
+    result = live.launch_game(str(tmp_path), warp="game/script.rpy:1", language="english")
 
     assert result["code"] == "BRIDGE_PROJECT_LOCKED"
-    assert result["requested_language"] == "japanese"
+    assert result["requested_language"] == "english"
+    assert result["active_language"] == "english"
     assert result["language_applied"] is False
-    assert "cannot be applied" in result["message"]
+    assert "already_active" not in result
+    assert "was not applied" in result["message"]
+
+
+def test_failed_launch_status_never_reports_a_language_as_applied(tmp_path):
+    task = live._LaunchTask(tmp_path, requested_language="english")
+    task.lifecycle = "failed"
+    task.done_event.set()
+    task.result = {"ok": False, "code": "LAUNCH_FAILED", "language_applied": True}
+
+    result = live._launch_task_status(task)
+
+    assert result["language_applied"] is False
+
+
+def test_ready_launch_status_keeps_an_unreported_language_unknown(tmp_path):
+    task = live._LaunchTask(tmp_path, requested_language="english")
+    task.lifecycle = "ready"
+    task.done_event.set()
+    task.session = types.SimpleNamespace(
+        editor=True,
+        process=types.SimpleNamespace(poll=lambda: None),
+        client=types.SimpleNamespace(get_state=lambda: {"current_label": "start"}),
+    )
+    task.result = {"ok": True, "ready": True, "current_label": "start"}
+
+    result = live._launch_task_status(task)
+
+    assert result["language_applied"] is None

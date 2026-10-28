@@ -17,28 +17,33 @@ TOOL_NAMES = (
 _LANGUAGE_RESULT_KEYS = ("requested_language", "active_language", "language_applied")
 
 
-def _annotate_unacknowledged_language(
+def _annotate_language_result(
     result: dict[str, Any],
     language: str | None,
+    warning: str | None = None,
 ) -> dict[str, Any]:
-    """Mark a delegated launch that never acknowledged a requested language.
+    """Keep language fields honest for delegated dashboard launches.
 
-    Older dashboards ignore the unknown ``language`` key. Their successful reply
-    contains no language fields, so without this note the launch would look as
-    if the language had been applied.
+    An older dashboard ignores the unknown ``language`` key and returns no
+    language fields. Without this note the launch would look as if the language
+    had been applied. A successful launch that used the default savedir also
+    needs the persistence warning, because Ren'Py stores the language there.
     """
-    if language is None or any(key in result for key in _LANGUAGE_RESULT_KEYS):
-        return result
-    note = (
-        "The dashboard did not report language support, so the requested "
-        f"language {language!r} was not confirmed. Upgrade the dashboard or "
-        "launch without a language."
-    )
     annotated = dict(result)
-    annotated["requested_language"] = language
-    annotated["language_applied"] = False
-    message = annotated.get("message")
-    annotated["message"] = f"{message} {note}" if isinstance(message, str) and message else note
+    if language is not None and not any(key in annotated for key in _LANGUAGE_RESULT_KEYS):
+        note = (
+            "The dashboard did not report language support, so the requested "
+            f"language {language!r} was not confirmed. Upgrade the dashboard or "
+            "launch without a language."
+        )
+        annotated["requested_language"] = language
+        annotated["language_applied"] = False
+        message = annotated.get("message")
+        annotated["message"] = f"{message} {note}" if isinstance(message, str) and message else note
+    if language is not None and not annotated.get("ok"):
+        annotated["language_applied"] = False
+    if warning is not None and annotated.get("ok"):
+        annotated.setdefault("warning", warning)
     return annotated
 
 
@@ -117,7 +122,11 @@ def build_wrappers(context):
                         "launch_cancel_requested": True,
                     }
                 return live.cancelled_launch_result(phase="starting_renpy")
-            return _annotate_unacknowledged_language(delegated, language)
+            warning = live.language_persistence_warning(
+                language,
+                effective_savedir if isinstance(effective_savedir, str) else None,
+            )
+            return _annotate_language_result(delegated, language, warning)
         if cancel_event is not None and cancel_event.is_set():
             stopped = live.stop_external_game(project_path)
             if not stopped.get("ok"):

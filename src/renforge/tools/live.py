@@ -226,12 +226,48 @@ def _language_verdict(language: str | None, active_language: Any) -> dict[str, A
     A reused session cannot switch language. Saying ``language_applied: false``
     when the requested language is in fact already active would be a false
     alarm, so the verdict distinguishes "already active" from "not applied".
+    When the bridge does not report a language, ``None`` keeps the field present
+    without guessing.
     """
     if language is None:
         return {}
+    if active_language is None:
+        return {"language_applied": None}
     if active_language == language:
         return {"language_applied": True, "already_active": True}
     return {"language_applied": False}
+
+
+def _failed_language_verdict(language: str | None) -> dict[str, Any]:
+    """A failed launch applied nothing, even if that language is already active."""
+    return {"language_applied": False} if language is not None else {}
+
+
+def language_persistence_warning(language: str | None, savedir: str | None) -> str | None:
+    """Warn when a language override can reach the player's own preferences.
+
+    Ren'Py stores the language in preferences, which live in the savedir. The
+    default savedir is the player's real one; ``temporary`` and explicit custom
+    directories contain the change instead.
+    """
+    if language is None or savedir:
+        return None
+    return (
+        "Ren'Py stores the language in preferences, so this launch changed the "
+        "stored preference used by later launches. Use savedir='temporary' or a "
+        "dedicated savedir to contain it."
+    )
+
+
+def _apply_ready_language(result: dict[str, Any], language: str | None) -> None:
+    """Derive the verdict from the language the bridge actually reports."""
+    if language is None:
+        return
+    active = result.get("active_language")
+    if active is None:
+        result.setdefault("language_applied", None)
+    else:
+        result["language_applied"] = active == language
 
 
 def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
@@ -301,9 +337,10 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
             # A reused session answers through launch_game; keep its verdict
             # instead of rebuilding a silent ready payload from live state.
             launch_result = task.result or {}
-            for key in ("already_running", "language_applied", "message"):
+            for key in ("already_running", "language_applied", "message", "warning"):
                 if key in launch_result:
                     result[key] = launch_result[key]
+            _apply_ready_language(result, task.requested_language)
             return result
         except Exception:
             # Stale ready: initiate close and report closing/failure.
@@ -335,6 +372,12 @@ def _launch_task_status(task: _LaunchTask) -> dict[str, Any]:
     result.setdefault("requested_language", task.requested_language)
     if is_ready:
         result.setdefault("active_language", None)
+    if task.requested_language is not None:
+        if is_ready:
+            _apply_ready_language(result, task.requested_language)
+        else:
+            # A failed task applied nothing, whatever an inner result may claim.
+            result["language_applied"] = False
     result["elapsed_ms"] = elapsed_ms
     return result
 
@@ -374,7 +417,7 @@ def start_launch(
             message="A launch is already starting; poll status or stop it first.",
             error="A launch is already starting; poll status or stop it first.",
         )
-        if language is not None and task.requested_language != language:
+        if language is not None:
             result["requested_language"] = language
             result["language_applied"] = False
         return result
@@ -480,7 +523,7 @@ def _session_mode_mismatch(
         "requested_language": requested_language,
         "active_language": active_language,
     }
-    result.update(_language_verdict(requested_language, active_language))
+    result.update(_failed_language_verdict(requested_language))
     return result
 
 
@@ -666,10 +709,9 @@ def launch_game(
                 "requested_language": language,
                 "active_language": active_language,
             }
-            verdict = _language_verdict(language, active_language)
-            result.update(verdict)
-            if verdict.get("language_applied") is False:
-                note = " The requested language cannot be applied to the existing session."
+            result.update(_failed_language_verdict(language))
+            if language is not None:
+                note = " The requested language was not applied to the existing session."
                 result["message"] = message + note
                 result["error"] = message + note
             return result
@@ -740,13 +782,18 @@ def launch_game(
         result["bridge_port"] = session_obj.client._config.port
     except Exception:
         pass
-    if language is not None and active_language is not None:
-        result["language_applied"] = active_language == language
-        if active_language != language:
+    if language is not None:
+        result["language_applied"] = (
+            None if active_language is None else active_language == language
+        )
+        if active_language is not None and active_language != language:
             result["message"] = (
                 "Ren'Py reports active language %r instead of the requested %r."
                 % (active_language, language)
             )
+        warning = language_persistence_warning(language, savedir)
+        if warning is not None:
+            result["warning"] = warning
     if session_obj.temporary_savedir is not None:
         result["savedir"] = str(session_obj.temporary_savedir)
     if session_obj.headless:

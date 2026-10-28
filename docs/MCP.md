@@ -185,8 +185,11 @@ only `renforge_launch` accepts a language: a later jump/new-game/Warp relaunch
 starts without it and returns to the stored preference. Launch results echo
 `requested_language`, plus `active_language` read from the bridge when the
 session is ready. `language_applied` is `true` only when the bridge reports the
-requested language active; a reused session that cannot switch reports `false`
-with a message, unless the language was already active.
+requested language active, `false` when the launch did not apply it, and `null`
+when the bridge did not report a language. A reused session that cannot switch
+reports `false` with a message, unless the language was already active. A
+successful launch with `language` and no isolated `savedir` adds a `warning`,
+because the stored preference changed.
 
 After editing a running project's `.rpy` file, hot-reload it and inspect the
 result without restarting the game process:
