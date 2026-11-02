@@ -30,9 +30,12 @@ versioning.
 
 ### Fixed
 
-- Shadow lint refuses to report success on reported lint errors, timeouts, or
-  truncated transcripts, and a validation exception marks the editor
-  transaction failed.
+- `renforge_validate` refuses to report success on reported lint errors,
+  timeouts, or truncated transcripts. The lenient editor commit/undo gate still
+  fails on timeouts and treats a long transcript as diagnostic; set
+  `RENFORGE_SHADOW_STRICT_LINT=1` to make reported lint errors and truncation
+  block that gate too. A validation exception marks the editor transaction
+  failed.
 - Live Editor Save keeps polling after `reload_script` resets the bridge
   connection, instead of failing the status read with "Connection reset by
   peer".
